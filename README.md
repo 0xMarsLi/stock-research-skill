@@ -1,85 +1,195 @@
-# Daily US Stock Agent
+# stock-research
 
-TypeScript + LangGraph.js 美股研究輔助系統。Markdown 為唯一事實來源（source of
-truth）。依 PRD 規劃三條解耦流程（Research / Trade Journal / Position Review）；
-**目前實作 Research 流程**，產出繁體中文研究報告。
+> Equity research assistant: surface **good stocks**, judge **entry timing**, then
+> **validate** each call against online market consensus.
+> Built with TypeScript + LangGraph.js. Reports are written in Traditional Chinese.
 
-> ⚠️ 本工具產出為程式化的「有紀律分析」，**非投資建議**。學術證據顯示純 LLM + 公開
-> 資訊難以產生持續超額報酬；請將其定位為決策輔助與投資日誌，而非賺錢預測。
+With hundreds of stocks every day, the question is never "which is strongest right
+now" (that's hindsight) — it's **"which are good stocks worth holding, and is now a
+good time to enter."** This tool turns that into a repeatable, auditable pipeline:
+numbers come from formulas (not LLM guesses), judgment comes from LLMs, and the
+final pick is checked against what the market is actually saying.
 
-## 設計哲學（核心）
+> ⚠️ **Not investment advice.** Evidence shows pure LLM + public information has no
+> proven, persistent edge. Treat this as a disciplined, reproducible **decision aid
+> and research journal**, not a profit predictor.
 
-1. **數字歸公式、判斷歸 LLM**：進場區 / 停損 / 停利由 `nodes/trade-plan.node.ts`
-   依**真實 ATR、均線**以公式計算（停損 = 現價 − 2×ATR，風報比 R:R = 2），LLM 只負責
-   判斷與總結，不自行生成價格（避免幻覺）。
-2. **兩階段篩選**（`nodes/screener.node.ts`）：先篩「好股票」（趨勢健康 + 品質：獲利/
-   成長/估值），再依**進場時機**分類。不是「選現在最強的」（結果論），而是「好股票 +
-   適合進場」。
-3. **市場驗證層**：對判定可進場的股票，用 Gemini 內建 Google Search 搜網路評論，
-   比對市場是否認同我們的判斷（附和 / 部分分歧 / 相左）。
+---
+
+## How it works (core pipeline)
+
+Two entry points share one analysis pipeline:
+
+```
+                         ┌─────────────────┐
+   pnpm research ───────▶│  Market regime   │  SPY/QQQ trend, VIX, yields
+   (screen the universe) │  market_regime   │  → risk_on / risk_off
+                         └────────┬────────┘
+                                  │ risk_off → emit "no trade" and stop
+                                  ▼
+                         ┌─────────────────────────────────────┐
+                         │  Two-stage screen (pure formula)      │
+                         │                                       │
+                         │  Stage 1 — good stock?                │
+                         │    trend-health gate (above MA50,     │
+                         │      rising MA200, not lagging market)│
+                         │    + quality score (margin/growth/val)│
+                         │                                       │
+                         │  Stage 2 — good entry? (distance MA20)│
+                         │    ├─ near support → enterNow (top N)  │
+                         │    └─ extended     → watchlist         │
+                         └────────┬────────────────────────────┘
+   pnpm analyze NVDA ──────────── ┤ (specific tickers: skip screen, enter here)
+   (analyze given tickers)        ▼
+                         ┌─────────────────────────────────────┐
+                         │  Deep analysis (top N enterNow only)  │
+                         │                                       │
+                         │  1. multi-lens agents (LLM):          │
+                         │     technical / fundamental /         │
+                         │     valuation / news                  │
+                         │  2. trade plan (formula): entry/stop/ │
+                         │     target from real ATR & MAs (R:R=2)│
+                         │  3. bull / bear debate agents         │
+                         │  4. risk pre-check + aggregator       │
+                         │  5. market validation: search the web,│
+                         │     does consensus agree with us?     │
+                         └────────┬────────────────────────────┘
+                                  ▼
+                    Traditional-Chinese Markdown report
+            research/recommendations/<date>.md     (screen)
+            research/analysis/<date>_<tickers>.md   (analyze)
+```
+
+**Three design principles** (and what sets it apart from "LLM eyeballs a chart"
+tools):
+
+1. **Numbers from formulas, judgment from LLMs** — entry zone / stop / target are
+   computed in `nodes/trade-plan.node.ts` from **real ATR and moving averages**
+   (stop = entry − 2×ATR, reward:risk = 2). The LLM **never invents prices**, which
+   eliminates numeric hallucination. The "real indicators" table is computed too.
+2. **Good stock first, timing second** — screening is not "pick the strongest";
+   it's "healthy + enterable now". Good-but-extended names aren't dropped — they go
+   to a **watchlist with a pullback reference price**.
+3. **Market validation** — for every actionable pick, search the web for consensus
+   and label it **agree / mixed / disagree**, covering the "are we wrong?" blind spot.
+
+---
 
 ## Setup
 
 ```bash
 pnpm install
-cp .env.example .env   # 填 GOOGLE_API_KEY（必填）、FINNHUB_API_KEY（選填）
+cp .env.example .env   # configure keys — see "Data sources & configuration" below
 ```
 
-| 環境變數 | 必填 | 用途 |
-|---|---|---|
-| `GOOGLE_API_KEY` | ✅ | Gemini（[aistudio.google.com/apikey](https://aistudio.google.com/apikey)）|
-| `GEMINI_MODEL` | | 預設 `gemini-2.5-flash`（本專案實測用 `gemini-3.1-flash-lite`）|
-| `FINNHUB_API_KEY` | | 基本面/新聞；無則該部分走「資料不足」分支 |
-| `SENTIMENT_PROVIDER` | | 市場情緒搜尋後端，預設 `gemini`（grounding，免額外金鑰）|
-
-價格資料用 `yahoo-finance2`（免金鑰）。
-
-## 指令
+## Usage
 
 ```bash
-pnpm research            # 篩選股票池 → 報告（預設深入分析 top 3）
-pnpm research --top 5    # 深入分析前 5 名（亦可用環境變數 RESEARCH_TOP_N）
-pnpm analyze NVDA AAPL   # 跳過篩選，只分析指定股票
-pnpm test                # 單元測試
+pnpm research            # screen the universe, deep-analyze top 3 (default)
+pnpm research --top 5    # top 5 (or set RESEARCH_TOP_N)
+pnpm analyze NVDA AAPL   # skip screening, analyze the given tickers
+pnpm test                # unit tests (38)
 pnpm typecheck
 ```
 
-- 篩選報告 → `research/recommendations/<美東日期>.md`
-- 指定分析報告 → `research/analysis/<美東日期>_<tickers>.md`
+Report paths: screen → `research/recommendations/<US-Eastern date>.md`;
+analyze → `research/analysis/<US-Eastern date>_<tickers>.md`.
 
-## Research 流程
+## What a report looks like (excerpt — reports are in Traditional Chinese)
+
+```markdown
+## ✅ 適合現在進場（深入分析）
+
+| 標的 | 建議動作 | 信心 | 進場區 | 停損 | 停利 | 建議倉位 |
+|------|---------|-----|--------|------|------|---------|
+| ANET | 回檔買進 | 80  | 157–165 | 145.34 | 192.62 | 5% |
+
+### ANET — 回檔買進（信心 80）
+
+#### 交易計畫（公式計算）          #### 技術指標（實算）
+| 進場區間 | 157.16 – 165.04 |       | 現價 | 169.67 |
+| 停損    | 145.34 |              | MA20 | 161.10 |
+| 停利    | 192.62 |              | MA50 | 158.53 |
+| 風報比  | 2 |                   | ATR  |   7.88 |
+
+#### 市場討論（網路驗證）
+- 市場觀點：**偏多**　｜　vs 我們的「回檔買進」：**✅ 附和我們**
+  華爾街給予「強力買進」，目標價持續調升；風險為客戶集中與高估值。
+  來源：marketbeat.com、investing.com …
+
+## 👀 觀察名單（體質佳，未深度分析）
+### 漲多·等回檔
+| 標的 | 品質分 | 高於MA20 | 回檔參考價(MA20) |
+| MU  | 100   | +17.4%  | 965.6 |
+```
+
+## Project structure
 
 ```
-market_regime ──(risk_off)──▶ no_trade ──▶ report
-      │
-  (risk_on / analyze 模式)
-      ▼
-篩選（兩階段）┌─ enterNow (top N) ─▶ 深入分析（technical/fundamental/valuation/
-      │      │                        news/bull/bear → 交易計畫公式 → risk → 整合
-      │      │                        → 市場驗證）─▶ report 區塊一「適合現在進場」
-      │      └─ watchlist ──────────▶ report 區塊二「觀察名單」（輕量列出，未深度分析）
+src/
+  graphs/research.graph.ts   LangGraph main flow (screen / analyze dual mode)
+  agents/                    LLM agents: technical, fundamental, valuation,
+                             news, bull-case, bear-case, risk-precheck,
+                             research-aggregator, market-sentiment
+  nodes/                     deterministic: screener (two-stage),
+                             trade-plan (formula), markdown-writer
+  services/
+    indicators.service.ts    SMA / RSI / MACD / ATR / relative strength
+    providers/               data-source abstraction (swap source = swap impl):
+                             prices, fundamentals/news, market sentiment;
+                             includes API rate limiter and same-day cache
+  schemas/                   zod (explicit agent-output fields for safe parsing)
+  app/cli.ts                 CLI entry point
+research/                    generated reports
+SKILL.md                     instructions for use as a cross-agent skill (agentskills.io)
 ```
 
-報告含：候選總覽、交易計畫（公式）、技術指標（實算）、各面向評分、多空、失效條件、
-**市場討論（網路驗證）**；觀察名單分「可進場·排名外」與「漲多·等回檔」。
+## Known limitations
 
-## 架構
+- Free-tier fundamentals are shallow (no ROIC / margin trend / F-Score), so the
+  quality factor is a lightweight proxy.
+- **No backtest**: the full flow can't be backtested cleanly (fundamentals lack
+  point-in-time history; web search leaks future info). Only the pure
+  technical/formula path could be backtested honestly.
+- Tech stocks only; "good stock + good timing" ≠ "finding the next breakout"
+  (which inherently can't be screened from hindsight data).
 
-- `agents/` — LLM agents（technical / fundamental / valuation / news / bull / bear /
-  risk-precheck / research-aggregator / market-sentiment）
-- `nodes/` — deterministic（screener 兩階段、trade-plan 公式、markdown-writer）
-- `graphs/research.graph.ts` — LangGraph 主流程（screen / analyze 雙模式）
-- `services/providers/` — 資料來源抽象（market-data / fundamentals / news / sentiment），
-  換源只改實作；含 Finnhub 限速器與當日快取
-- `schemas/` — zod（agent 輸出欄位明確，因 Gemini 不接受開放 record / tuple）
+## Roadmap
 
-## 已知限制
+Three decoupled flows per the PRD; **Research** is done:
 
-- 免費 Finnhub 基本面資料淺（無 ROIC / 毛利趨勢 / F-Score），品質因子為輕量代理。
-- 市場情緒來源連結為 Gemini grounding redirect（標題可辨識來源網站）。
-- 無回測（最該補）：因基本面拿不到歷史、LLM 搜尋含未來資訊，僅「純技術面/公式」可乾淨回測。
+- [x] Research flow (screen + analyze + market validation)
+- [ ] Trade Journal (record buys/sells, average cost + lots)
+- [ ] Position Review (daily holdings review with cost/size/trailing stop)
+- [ ] Backtest (honest technical-only), scheduling & notifications
 
-## 尚未實作
+## Use as an agent skill
 
-Trade Journal 流程、Position Review 流程（帶成本/部位/移動停損）、回測、付費資料源、
-排程自動化與推播、多市場。
+The core is a standalone CLI, but the repo ships `SKILL.md` (following the
+agentskills.io open standard), so it can be loaded as a skill by compatible agents
+(Claude Code, Codex, Hermes, OpenClaw, …) — the agent runs the CLI and interprets
+the report. For programmatic/structured integration, call `runResearch(topN)` /
+`runAnalyze(tickers)` in `graphs/research.graph.ts`.
+
+---
+
+## Data sources & configuration
+
+All data goes through provider interfaces (`services/providers/`); swapping a
+source only changes its implementation. Copy `.env.example` to `.env` and set:
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `GOOGLE_API_KEY` | ✅ | LLM inference and market-sentiment search |
+| `GEMINI_MODEL` |  | LLM model (falls back to a built-in default) |
+| `FINNHUB_API_KEY` |  | Fundamentals/news; if unset, those parts run a "data unavailable" branch and the flow still completes |
+| `SENTIMENT_PROVIDER` |  | Market-sentiment search backend (built-in default needs no extra key) |
+
+Services used:
+
+- **LLM / market-sentiment search**: Google [Gemini](https://aistudio.google.com/apikey)
+  (built-in Google Search grounding — market validation needs no extra key).
+- **Prices / OHLCV**: `yahoo-finance2` (no key).
+- **Fundamentals / news**: [Finnhub](https://finnhub.io) free tier (rate-limited;
+  a rate limiter and same-day cache are built in).
+```

@@ -40,7 +40,7 @@ export function loadEnv(): Env {
 
   cached = {
     googleApiKey,
-    geminiModel: process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash",
+    geminiModel: process.env.GEMINI_MODEL?.trim() || "gemini-3.1-flash-lite",
     finnhubApiKey,
     dataProvider: process.env.DATA_PROVIDER?.trim() || "finnhub",
     sentimentProvider: process.env.SENTIMENT_PROVIDER?.trim() || "gemini",
