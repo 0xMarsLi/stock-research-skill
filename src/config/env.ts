@@ -2,7 +2,7 @@ import "dotenv/config";
 
 /**
  * Centralized environment access + validation.
- * GOOGLE_API_KEY is required (no LLM = no research). Everything else is
+ * GEMINI_API_KEY is required (no LLM = no research). Everything else is
  * optional; missing keys produce a warning and a degraded-but-running flow.
  */
 
@@ -11,7 +11,7 @@ function warnOnce(message: string): void {
 }
 
 export type Env = {
-  googleApiKey: string;
+  geminiApiKey: string;
   geminiModel: string;
   finnhubApiKey: string | null;
   dataProvider: string;
@@ -24,10 +24,13 @@ let cached: Env | null = null;
 export function loadEnv(): Env {
   if (cached) return cached;
 
-  const googleApiKey = process.env.GOOGLE_API_KEY?.trim() ?? "";
-  if (!googleApiKey) {
+  // Prefer GEMINI_API_KEY; fall back to GOOGLE_API_KEY (langchain/Google SDK's
+  // default var) for backward compatibility.
+  const geminiApiKey =
+    process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim() || "";
+  if (!geminiApiKey) {
     throw new Error(
-      "GOOGLE_API_KEY is required. Copy .env.example to .env and set it (https://aistudio.google.com/apikey).",
+      "GEMINI_API_KEY is required. Copy .env.example to .env and set it (https://aistudio.google.com/apikey).",
     );
   }
 
@@ -39,7 +42,7 @@ export function loadEnv(): Env {
   }
 
   cached = {
-    googleApiKey,
+    geminiApiKey,
     geminiModel: process.env.GEMINI_MODEL?.trim() || "gemini-3.1-flash-lite",
     finnhubApiKey,
     dataProvider: process.env.DATA_PROVIDER?.trim() || "finnhub",

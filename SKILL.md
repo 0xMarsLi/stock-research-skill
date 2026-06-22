@@ -33,11 +33,12 @@ This skill runs a local Node project. From the project directory:
 
 ```bash
 pnpm install
-cp .env.example .env   # set GOOGLE_API_KEY (required); FINNHUB_API_KEY optional
+cp .env.example .env   # set GEMINI_API_KEY (required); FINNHUB_API_KEY optional
 ```
 
-Required env: `GOOGLE_API_KEY` (Gemini). Optional: `FINNHUB_API_KEY`
-(fundamentals/news; without it those parts degrade gracefully), `GEMINI_MODEL`.
+Required env: `GEMINI_API_KEY` (Gemini; `GOOGLE_API_KEY` also accepted). Optional:
+`FINNHUB_API_KEY` (fundamentals/news; without it those parts degrade gracefully),
+`GEMINI_MODEL`.
 
 ## How to run
 

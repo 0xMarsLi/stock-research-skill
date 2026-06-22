@@ -13,7 +13,7 @@ export function getModel(): ChatGoogleGenerativeAI {
   if (model) return model;
   const env = loadEnv();
   model = new ChatGoogleGenerativeAI({
-    apiKey: env.googleApiKey,
+    apiKey: env.geminiApiKey,
     model: env.geminiModel,
     temperature: 0.2,
     maxRetries: 2,

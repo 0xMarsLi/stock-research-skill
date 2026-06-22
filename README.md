@@ -180,7 +180,7 @@ source only changes its implementation. Copy `.env.example` to `.env` and set:
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `GOOGLE_API_KEY` | ✅ | LLM inference and market-sentiment search |
+| `GEMINI_API_KEY` | ✅ | LLM inference and market-sentiment search (`GOOGLE_API_KEY` also accepted) |
 | `GEMINI_MODEL` |  | LLM model (falls back to a built-in default) |
 | `FINNHUB_API_KEY` |  | Fundamentals/news; if unset, those parts run a "data unavailable" branch and the flow still completes |
 | `SENTIMENT_PROVIDER` |  | Market-sentiment search backend (built-in default needs no extra key) |
