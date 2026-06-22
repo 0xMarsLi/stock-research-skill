@@ -1,9 +1,9 @@
 {
-  "name": "trading-agent",
+  "name": "stock-research-skill",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Daily US Stock Agent — TypeScript + LangGraph.js investment research assistant",
+  "description": "Stock research — TypeScript + LangGraph.js equity research assistant (screen + analyze), usable via CLI or as a cross-agent skill",
   "scripts": {
     "research": "tsx src/app/cli.ts research",
     "analyze": "tsx src/app/cli.ts analyze",
