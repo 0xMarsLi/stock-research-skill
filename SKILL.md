@@ -76,7 +76,9 @@ may take a few minutes; reruns the same day are cached and fast.
 
 - **適合現在進場（深入分析）**: top picks. Each has a 交易計畫 table
   (進場區/停損/停利 — formula-computed, trustworthy numbers), 技術指標(實算),
-  各面向評分 (technical/fundamental/valuation/news 0–100), 看多/看空, and
+  **價格結構（公式計算）** (nearest support/resistance, 20d range, MA120,
+  consolidation/near-breakout — what a chart reader sees), 各面向評分
+  (technical/fundamental/valuation/news 0–100), 看多/看空, and
   **市場討論（網路驗證）** showing whether market consensus agrees (✅附和 /
   🟡部分分歧 / ⚠️相左) with our call, plus source links.
 - **觀察名單**: good stocks NOT analyzed deeply — either ranked just outside the

@@ -132,3 +132,130 @@ export function relativeStrengthPct(
 }
 
 export const closesOf = (bars: OhlcvBar[]): number[] => bars.map((b) => b.close);
+
+// --- Horizontal price structure (support / resistance / range) ---------------
+// Heuristic, formula-based (no LLM). Captures what a trader sees on the daily
+// chart: pivot highs/lows, the nearest resistance above / support below the
+// current price, and whether price is consolidating in a tight box.
+
+export interface Pivot {
+  index: number;
+  price: number;
+  kind: "high" | "low";
+}
+
+/**
+ * Pivot (swing) highs/lows: a bar is a pivot high if its high is the highest
+ * within `lookback` bars on BOTH sides (mirror for pivot low). Bars too close to
+ * the edges can't be confirmed and are skipped.
+ */
+export function swingHighsLows(bars: OhlcvBar[], lookback = 5): Pivot[] {
+  const pivots: Pivot[] = [];
+  for (let i = lookback; i < bars.length - lookback; i++) {
+    const hi = bars[i]!.high;
+    const lo = bars[i]!.low;
+    let isHigh = true;
+    let isLow = true;
+    for (let j = i - lookback; j <= i + lookback; j++) {
+      if (j === i) continue;
+      if (bars[j]!.high >= hi) isHigh = false;
+      if (bars[j]!.low <= lo) isLow = false;
+    }
+    if (isHigh) pivots.push({ index: i, price: hi, kind: "high" });
+    if (isLow) pivots.push({ index: i, price: lo, kind: "low" });
+  }
+  return pivots;
+}
+
+export interface SupportResistance {
+  /** Nearest pivot price strictly above `price` (resistance), or null. */
+  resistance: number | null;
+  /** Nearest pivot price strictly below `price` (support), or null. */
+  support: number | null;
+}
+
+/**
+ * From pivots, find the nearest resistance above and nearest support below the
+ * given price. Pivots within `clusterPct` of each other collapse to one level
+ * (so a band tested several times counts once, at its average).
+ */
+export function supportResistance(
+  bars: OhlcvBar[],
+  price: number,
+  lookback = 5,
+  clusterPct = 1.5,
+): SupportResistance {
+  const pivots = swingHighsLows(bars, lookback);
+  const levels = clusterLevels(pivots.map((p) => p.price), clusterPct);
+
+  let resistance: number | null = null;
+  let support: number | null = null;
+  for (const lvl of levels) {
+    if (lvl > price && (resistance === null || lvl < resistance)) resistance = lvl;
+    if (lvl < price && (support === null || lvl > support)) support = lvl;
+  }
+  return { resistance, support };
+}
+
+/** Collapse nearby levels into their averages (cluster within clusterPct%). */
+function clusterLevels(prices: number[], clusterPct: number): number[] {
+  const sorted = [...prices].sort((a, b) => a - b);
+  const clusters: number[] = [];
+  let bucket: number[] = [];
+  for (const p of sorted) {
+    if (bucket.length === 0) {
+      bucket.push(p);
+      continue;
+    }
+    const ref = bucket[bucket.length - 1]!;
+    if (Math.abs(p / ref - 1) * 100 <= clusterPct) {
+      bucket.push(p);
+    } else {
+      clusters.push(avg(bucket));
+      bucket = [p];
+    }
+  }
+  if (bucket.length > 0) clusters.push(avg(bucket));
+  return clusters;
+}
+
+function avg(xs: number[]): number {
+  return xs.reduce((a, b) => a + b, 0) / xs.length;
+}
+
+export interface RangeBox {
+  high: number;
+  low: number;
+  /** Box width as % of the low. */
+  widthPct: number;
+  /** Where price sits in the box, 0 (at low) .. 100 (at high). */
+  pctInRange: number;
+  /** True when the recent box is tight (widthPct <= tightPct) → consolidating. */
+  isConsolidating: boolean;
+}
+
+/**
+ * High/low box over the last `window` bars + where current price sits in it.
+ * A tight box (<= `tightPct` wide) flags consolidation.
+ */
+export function rangeBox(
+  bars: OhlcvBar[],
+  window = 20,
+  tightPct = 12,
+): RangeBox | null {
+  if (bars.length < window) return null;
+  const slice = bars.slice(-window);
+  const high = Math.max(...slice.map((b) => b.high));
+  const low = Math.min(...slice.map((b) => b.low));
+  if (low <= 0 || high <= low) return null;
+  const widthPct = (high / low - 1) * 100;
+  const close = slice[slice.length - 1]!.close;
+  const pctInRange = ((close - low) / (high - low)) * 100;
+  return {
+    high,
+    low,
+    widthPct,
+    pctInRange: Math.max(0, Math.min(100, pctInRange)),
+    isConsolidating: widthPct <= tightPct,
+  };
+}

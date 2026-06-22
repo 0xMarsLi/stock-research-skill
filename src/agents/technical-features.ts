@@ -6,6 +6,8 @@ import {
   atr,
   relativeStrengthPct,
   closesOf,
+  supportResistance,
+  rangeBox,
 } from "../services/indicators.service.js";
 
 /**
@@ -26,6 +28,25 @@ export interface TechnicalFeatures {
   atr14: number | null;
   atrPctOfPrice: number | null;
   relStrength20dVsBenchmarkPct: number | null;
+  /** 120-day MA (quarter/half-year line) — common mid-term support/resistance. */
+  ma120: number | null;
+  // --- Horizontal price structure (what a trader sees on the daily chart) ---
+  /** Nearest pivot resistance above current price. */
+  resistance: number | null;
+  /** % distance from price up to resistance (positive). */
+  distToResistancePct: number | null;
+  /** Nearest pivot support below current price. */
+  support: number | null;
+  /** % distance from price down to support (positive). */
+  distToSupportPct: number | null;
+  /** Recent box high/low and where price sits in it. */
+  rangeHigh: number | null;
+  rangeLow: number | null;
+  pctInRange: number | null;
+  /** Tight recent box → consolidating (may break out or get rejected). */
+  isConsolidating: boolean;
+  /** Price is within ~1 ATR of resistance → at a decision point. */
+  nearResistance: boolean;
   bars: number;
 }
 
@@ -45,6 +66,19 @@ export function computeFeatures(
     ma200 != null && ma200Prev != null && ma200Prev !== 0
       ? (ma200 / ma200Prev - 1) * 100
       : null;
+
+  // Horizontal price structure (formula-derived; the LLM only narrates it).
+  const sr = lastClose != null ? supportResistance(bars, lastClose, 5, 1.5) : { resistance: null, support: null };
+  const box = rangeBox(bars, 20, 12);
+  const distToResistancePct =
+    sr.resistance != null && lastClose ? (sr.resistance / lastClose - 1) * 100 : null;
+  const distToSupportPct =
+    sr.support != null && lastClose ? (1 - sr.support / lastClose) * 100 : null;
+  const nearResistance =
+    distToResistancePct != null && atr14 != null && lastClose != null
+      ? sr.resistance! - lastClose <= atr14
+      : false;
+
   return {
     ticker,
     lastClose,
@@ -61,6 +95,16 @@ export function computeFeatures(
       closesOf(benchmarkBars),
       20,
     ),
+    ma120: sma(closes, 120),
+    resistance: sr.resistance,
+    distToResistancePct,
+    support: sr.support,
+    distToSupportPct,
+    rangeHigh: box?.high ?? null,
+    rangeLow: box?.low ?? null,
+    pctInRange: box?.pctInRange ?? null,
+    isConsolidating: box?.isConsolidating ?? false,
+    nearResistance,
     bars: bars.length,
   };
 }

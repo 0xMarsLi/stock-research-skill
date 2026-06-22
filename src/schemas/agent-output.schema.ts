@@ -31,6 +31,7 @@ export const TechnicalSchema = z.object({
   trend: z.string().describe("short description of current trend"),
   entryStrategy: z.enum(["immediate", "pullback", "breakout", "avoid"]),
   entryRationale: z.string().describe("why this entry strategy, referencing the indicators (no invented numbers)"),
+  priceStructureNote: z.string().describe("how price sits vs nearest support/resistance and whether it's consolidating / near a breakout (reference the provided levels, do not invent new ones)"),
   invalidIf: z.string().describe("condition that invalidates the technical setup"),
   notes: z.string(),
 });

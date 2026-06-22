@@ -78,6 +78,7 @@ describe("renderReport", () => {
             trend: "line1\nline2 | piped",
             entryStrategy: "pullback",
             entryRationale: "wait for dip",
+            priceStructureNote: "near resistance",
             invalidIf: "close < MA50",
             notes: "",
           },

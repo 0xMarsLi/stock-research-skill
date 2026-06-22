@@ -236,6 +236,7 @@ async function writeReportNode(state: State): Promise<Partial<State>> {
     regime: state.marketRegime!,
     recommendations: state.recommendations ?? [],
     agentResults: state.agentResults,
+    featuresByTicker: state.featuresByTicker,
     screenScores: state.screenScores,
     watchlist: isAnalyze ? [] : state.watchlist ?? [],
     subdir: isAnalyze ? "analysis" : "recommendations",

@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { sma, ema, rsi, macd, atr, relativeStrengthPct } from "./indicators.service.js";
+import { sma, ema, rsi, macd, atr, relativeStrengthPct, swingHighsLows, supportResistance, rangeBox } from "./indicators.service.js";
 import type { OhlcvBar } from "../schemas/market.schema.js";
+
+/** Build an OHLCV bar from close (high/low offset for pivot tests). */
+function bar(close: number, high = close, low = close): OhlcvBar {
+  return { date: "2026-01-01", open: close, high, low, close, volume: 1000 };
+}
 
 describe("sma", () => {
   it("averages the last `period` values", () => {
@@ -87,5 +92,45 @@ describe("relativeStrengthPct", () => {
   });
   it("returns null when too short", () => {
     expect(relativeStrengthPct([100], [100], 5)).toBeNull();
+  });
+});
+
+describe("swingHighsLows", () => {
+  it("identifies a pivot high and pivot low", () => {
+    const bars = [10, 11, 12, 20, 12, 8, 5, 1, 5, 9, 12].map((c) => bar(c, c + 0.5, c - 0.5));
+    const pivots = swingHighsLows(bars, 2);
+    expect(pivots.some((p) => p.kind === "high" && p.index === 3)).toBe(true);
+    expect(pivots.some((p) => p.kind === "low" && p.index === 7)).toBe(true);
+  });
+});
+
+describe("supportResistance", () => {
+  it("finds nearest resistance above and support below the price", () => {
+    const bars = [8, 10, 20, 10, 8, 5, 8, 11, 13].map((c) => bar(c, c + 0.3, c - 0.3));
+    const { resistance, support } = supportResistance(bars, 12, 1, 1.5);
+    expect(resistance).not.toBeNull();
+    expect(resistance!).toBeGreaterThan(12);
+    expect(support).not.toBeNull();
+    expect(support!).toBeLessThan(12);
+  });
+});
+
+describe("rangeBox", () => {
+  it("flags a tight box as consolidating", () => {
+    const flat = Array.from({ length: 20 }, () => bar(100, 101, 99));
+    const r = rangeBox(flat, 20, 12);
+    expect(r).not.toBeNull();
+    expect(r!.isConsolidating).toBe(true);
+    expect(r!.pctInRange).toBeGreaterThanOrEqual(0);
+    expect(r!.pctInRange).toBeLessThanOrEqual(100);
+  });
+  it("flags a wide range as not consolidating, price near top", () => {
+    const bars = Array.from({ length: 20 }, (_, i) => bar(100 + i * 5, 100 + i * 5 + 1, 100 + i * 5 - 1));
+    const r = rangeBox(bars, 20, 12);
+    expect(r!.isConsolidating).toBe(false);
+    expect(r!.pctInRange).toBeGreaterThan(90);
+  });
+  it("returns null when too few bars", () => {
+    expect(rangeBox([bar(1)], 20)).toBeNull();
   });
 });

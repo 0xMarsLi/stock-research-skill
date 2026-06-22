@@ -47,11 +47,14 @@ Two entry points share one analysis pipeline:
                          │  1. multi-lens agents (LLM):          │
                          │     technical / fundamental /         │
                          │     valuation / news                  │
-                         │  2. trade plan (formula): entry/stop/ │
+                         │  2. price structure (formula):        │
+                         │     support/resistance, range,        │
+                         │     MA120, consolidation/breakout     │
+                         │  3. trade plan (formula): entry/stop/ │
                          │     target from real ATR & MAs (R:R=2)│
-                         │  3. bull / bear debate agents         │
-                         │  4. risk pre-check + aggregator       │
-                         │  5. market validation: search the web,│
+                         │  4. bull / bear debate agents         │
+                         │  5. risk pre-check + aggregator       │
+                         │  6. market validation: search the web,│
                          │     does consensus agree with us?     │
                          └────────┬────────────────────────────┘
                                   ▼
@@ -134,7 +137,8 @@ src/
   nodes/                     deterministic: screener (two-stage),
                              trade-plan (formula), markdown-writer
   services/
-    indicators.service.ts    SMA / RSI / MACD / ATR / relative strength
+    indicators.service.ts    SMA / RSI / MACD / ATR / relative strength /
+                             support-resistance / range / pivots
     providers/               data-source abstraction (swap source = swap impl):
                              prices, fundamentals/news, market sentiment;
                              includes API rate limiter and same-day cache

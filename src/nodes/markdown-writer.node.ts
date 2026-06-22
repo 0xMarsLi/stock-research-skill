@@ -4,6 +4,7 @@ import type { Recommendation } from "../schemas/recommendation.schema.js";
 import type { MarketRegimeResult } from "../schemas/market.schema.js";
 import type { AgentResults } from "../schemas/agent-output.schema.js";
 import type { MarketSentimentResult } from "../schemas/market-sentiment.schema.js";
+import type { TechnicalFeatures } from "../agents/technical-features.js";
 import type { ScoredCandidate } from "./screener.node.js";
 
 export interface ReportInput {
@@ -11,6 +12,8 @@ export interface ReportInput {
   regime: MarketRegimeResult;
   recommendations: Recommendation[];
   agentResults: Record<string, AgentResults>;
+  /** Per-ticker technical features (for the formula-derived price-structure block). */
+  featuresByTicker?: Record<string, TechnicalFeatures>;
   screenScores?: Record<string, ScoredCandidate>;
   /** Good stocks too extended to enter now — listed as a watchlist (not analyzed). */
   watchlist?: ScoredCandidate[];
@@ -73,6 +76,7 @@ export async function writeRecommendationReport(input: ReportInput): Promise<str
 
 export function renderReport(input: ReportInput): string {
   const { date, regime, recommendations, agentResults, screenScores } = input;
+  const featuresByTicker = input.featuresByTicker ?? {};
   const watchlist = input.watchlist ?? [];
   const buyable = recommendations.filter(
     (r) => r.recommendation === "buy" || r.recommendation === "buy_on_pullback",
@@ -119,7 +123,7 @@ export function renderReport(input: ReportInput): string {
     parts.push("## ✅ 適合現在進場（深入分析）", "");
     parts.push(...renderOverviewTable(recommendations));
     for (const rec of recommendations) {
-      parts.push(...renderCandidate(rec, agentResults[rec.ticker], screenScores?.[rec.ticker]));
+      parts.push(...renderCandidate(rec, agentResults[rec.ticker], screenScores?.[rec.ticker], featuresByTicker[rec.ticker]));
     }
   }
 
@@ -209,6 +213,7 @@ function renderCandidate(
   rec: Recommendation,
   agents: AgentResults | undefined,
   screen: ScoredCandidate | undefined,
+  features?: TechnicalFeatures,
 ): string[] {
   const lines: string[] = [
     `### ${rec.ticker} — ${label(ACTION_LABEL, rec.recommendation)}（信心 ${rec.confidence}）`,
@@ -307,6 +312,25 @@ function renderCandidate(
     }
   }
 
+  // 價格結構（公式計算）— 支撐/壓力/區間/120日線 + LLM 敘述。
+  if (features) {
+    lines.push(
+      "#### 價格結構（公式計算）",
+      "",
+      "| 項目 | 數值 |",
+      "|---|---|",
+      `| 上方壓力 | ${fmtNum(features.resistance)}${features.distToResistancePct != null ? `（+${features.distToResistancePct.toFixed(1)}%）` : ""} |`,
+      `| 下方支撐 | ${fmtNum(features.support)}${features.distToSupportPct != null ? `（−${features.distToSupportPct.toFixed(1)}%）` : ""} |`,
+      `| 近20日區間 | ${fmtNum(features.rangeLow)} – ${fmtNum(features.rangeHigh)}${features.pctInRange != null ? `（位於 ${features.pctInRange.toFixed(0)}%）` : ""} |`,
+      `| 120日線 | ${fmtNum(features.ma120)} |`,
+      `| 狀態 | ${features.isConsolidating ? "盤整中" : "未盤整"}${features.nearResistance ? "・貼近壓力（突破/被壓回決策點）" : ""} |`,
+      "",
+    );
+    if (agents?.technical?.priceStructureNote) {
+      lines.push("**價格結構判讀**：" + agents.technical.priceStructureNote, "");
+    }
+  }
+
   lines.push("#### 看多理由", "");
   lines.push(...bullets(rec.bullCase));
   lines.push("", "#### 看空理由", "");
@@ -360,6 +384,11 @@ function renderSentiment(s: MarketSentimentResult, ourRec: string): string[] {
 /** 表格儲存格：移除換行、跳脫 pipe，避免破壞表格。 */
 function cell(text: string): string {
   return text.replace(/\r?\n/g, " ").replace(/\|/g, "\\|").trim();
+}
+
+/** 數字格式化：null → N/A，否則兩位小數。 */
+function fmtNum(v: number | null | undefined): string {
+  return v == null ? "N/A" : v.toFixed(2);
 }
 
 function bullets(items: string[]): string[] {
