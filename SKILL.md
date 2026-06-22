@@ -27,18 +27,33 @@ LLM agents; actionable picks are validated against web market consensus.
 - "Is this a good entry point?" / "does the market agree?" → either command; the
   report includes formula entry/stop/target and a market-consensus check
 
-## Prerequisites (one-time)
+## Setup (first run — bootstrap before running)
 
-This skill runs a local Node project. From the project directory:
+This skill IS a Node project (the whole repo). Run all commands from the repo
+root. **On first use, bring it up before running an analysis** — do these in order
+and only what's missing:
 
-```bash
-pnpm install
-cp .env.example .env   # set GEMINI_API_KEY (required); FINNHUB_API_KEY optional
-```
+1. **Install dependencies** if `node_modules/` is absent:
+   ```bash
+   pnpm install      # if pnpm is missing: npm install
+   ```
+2. **Create `.env`** if absent, then ensure the API key is set:
+   ```bash
+   cp .env.example .env
+   ```
+   - Edit `.env` and set **`GEMINI_API_KEY`** (required). If the user doesn't have
+     one, direct them to https://aistudio.google.com/apikey to create a free key,
+     then paste it after `GEMINI_API_KEY=`.
+   - `FINNHUB_API_KEY` is optional (free at https://finnhub.io). Without it,
+     fundamentals/news degrade to a "data unavailable" branch but the flow still
+     completes. `GEMINI_MODEL` is optional (has a built-in default).
+3. **Verify** it builds before a long run (optional but recommended):
+   ```bash
+   pnpm typecheck
+   ```
 
-Required env: `GEMINI_API_KEY` (Gemini; `GOOGLE_API_KEY` also accepted). Optional:
-`FINNHUB_API_KEY` (fundamentals/news; without it those parts degrade gracefully),
-`GEMINI_MODEL`.
+If a command fails with a missing-key error, the key step above was skipped —
+guide the user through it, don't give up.
 
 ## How to run
 
@@ -54,7 +69,8 @@ pnpm analyze NVDA AAPL TSM
 
 Each command prints progress lines and finishes with:
 `Done. Report: <path>`. **Read that markdown file** — it is the result. Do not
-rely on the progress logs.
+rely on the progress logs. The first screen run fetches data for ~100 names and
+may take a few minutes; reruns the same day are cached and fast.
 
 ## Interpreting the report
 
