@@ -1,0 +1,31 @@
+{
+  "name": "trading-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Daily US Stock Agent — TypeScript + LangGraph.js investment research assistant",
+  "scripts": {
+    "research": "tsx src/app/cli.ts research",
+    "analyze": "tsx src/app/cli.ts analyze",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@langchain/core": "^1.2.0",
+    "@langchain/google-genai": "^2.2.0",
+    "@langchain/langgraph": "^1.4.4",
+    "dotenv": "^16.4.0",
+    "yahoo-finance2": "^3.15.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

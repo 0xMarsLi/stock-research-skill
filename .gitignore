@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+.DS_Store
+.cache/
+
+# generated research output (keep dir, ignore reports)
+research/recommendations/*.md
+!research/recommendations/.gitkeep
+research/analysis/*.md
