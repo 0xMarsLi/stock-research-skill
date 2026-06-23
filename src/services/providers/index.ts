@@ -6,18 +6,16 @@ import { YahooMarketDataProvider } from "./yahoo-market-data.js";
 import { FinnhubFundamentalsProvider } from "./finnhub-fundamentals.js";
 import { FinnhubNewsProvider } from "./finnhub-news.js";
 import { NullFundamentalsProvider, NullNewsProvider } from "./null-providers.js";
-import type { MarketSentimentProvider } from "./market-sentiment.provider.js";
-import { GeminiGroundedSearchProvider } from "./market-sentiment.provider.js";
 
 /**
- * Provider factory. Agents call getProviders() and depend only on the
- * interfaces — swapping vendors (or going paid) is contained here.
+ * Provider factory. The deterministic scripts depend only on these interfaces —
+ * swapping vendors (or going paid) is contained here. No LLM/sentiment provider:
+ * judgment and web search are the host agent's job, not this skill's.
  */
 export interface Providers {
   marketData: MarketDataProvider;
   fundamentals: FundamentalsProvider;
   news: NewsProvider;
-  sentiment: MarketSentimentProvider;
 }
 
 let cached: Providers | null = null;
@@ -32,16 +30,8 @@ export function getProviders(): Providers {
   const news = env.finnhubApiKey
     ? new FinnhubNewsProvider(env.finnhubApiKey)
     : new NullNewsProvider();
-  // Market sentiment: Gemini grounding for now (env.sentimentProvider reserved
-  // for future Tavily/other backends).
-  const sentiment = new GeminiGroundedSearchProvider();
-  cached = { marketData, fundamentals, news, sentiment };
+  cached = { marketData, fundamentals, news };
   return cached;
 }
 
-export type {
-  MarketDataProvider,
-  FundamentalsProvider,
-  NewsProvider,
-  MarketSentimentProvider,
-};
+export type { MarketDataProvider, FundamentalsProvider, NewsProvider };

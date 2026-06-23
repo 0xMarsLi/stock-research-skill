@@ -1,109 +1,80 @@
 ---
 name: stock-research
 description: >-
-  Research US equities and decide what is worth buying and when. Screens the
-  S&P 500 with published methodologies (Minervini Trend Template + CANSLIM +
-  RS Rating) into strong-trend candidates, or deep-analyzes specific tickers on
-  demand. Produces a Traditional-Chinese markdown report with
-  formula-computed entry/stop/target (real ATR & moving averages, not
-  LLM-guessed), technical/fundamental/valuation/news scoring, bull/bear cases,
-  and a web-grounded market-consensus check. Use when the user asks what US stock
-  to buy, whether a stock is a good entry now, to analyze specific tickers, or to
-  validate a stock pick against market opinion.
+  Screen US equities (S&P 500) for strong-trend growth candidates and analyze
+  specific tickers, using published methodologies (Minervini Trend Template +
+  O'Neil CANSLIM + cross-sectional RS Rating). Deterministic scripts output JSON
+  with formula-computed entry/stop/target, indicators, and pass/fail per rule;
+  YOU (the host agent) do the judgment — technical/fundamental/valuation/news,
+  bull-bear, a verdict, and web-search market validation — then write a report.
+  Use when the user asks what US stock to buy, whether a stock is a good entry,
+  to screen for candidates, or to analyze/validate specific tickers.
 ---
 
 # Stock Research
 
-A deterministic-where-it-counts equity research pipeline (TypeScript + LangGraph
-+ Gemini). Numbers come from formulas over real price data; judgment comes from
-LLM agents; actionable picks are validated against web market consensus.
+This is a **skill**: the bundled scripts do the *deterministic* part (fetch
+prices/fundamentals, run Minervini/CANSLIM/RS formulas, compute entry/stop/target)
+and print JSON. **You, the host agent, do the reasoning** — judge each candidate,
+debate bull/bear, verify against web search, and write the report. No LLM or LLM
+key is bundled; the brain is yours.
 
-> Not investment advice. Public-information analysis has no proven edge — treat
-> output as a disciplined, reproducible decision aid, not a profit predictor.
+> Not investment advice. The screen finds **already-strong** stocks by design —
+> treat output as a strong-stock candidate pool, not a "buy now" trigger.
 
 ## When to use
-
-- "What US stock can I buy now?" → run **screen** (`research`)
-- "Analyze NVDA / should I hold AAPL?" → run **analyze** with the tickers
-- "Is this a good entry point?" / "does the market agree?" → either command; the
-  report includes formula entry/stop/target and a market-consensus check
+- "What US stock can I buy now?" → run `scripts/screen.ts`
+- "Analyze NVDA / should I hold AAPL?" → run `scripts/analyze.ts NVDA AAPL`
+- "Is this a good entry / does the market agree?" → either, then do market validation
 
 ## Setup (first run — bootstrap before running)
-
-This skill IS a Node project (the whole repo). Run all commands from the repo
-root. **On first use, bring it up before running an analysis** — do these in order
-and only what's missing:
-
-1. **Install dependencies** if `node_modules/` is absent:
-   ```bash
-   pnpm install      # if pnpm is missing: npm install
-   ```
-2. **Create `.env`** if absent, then ensure the API key is set:
-   ```bash
-   cp .env.example .env
-   ```
-   - Edit `.env` and set **`GEMINI_API_KEY`** (required). If the user doesn't have
-     one, direct them to https://aistudio.google.com/apikey to create a free key,
-     then paste it after `GEMINI_API_KEY=`.
-   - `FINNHUB_API_KEY` is optional (free at https://finnhub.io). Without it,
-     fundamentals/news degrade to a "data unavailable" branch but the flow still
-     completes. `GEMINI_MODEL` is optional (has a built-in default).
-3. **Verify** it builds before a long run (optional but recommended):
-   ```bash
-   pnpm typecheck
-   ```
-
-If a command fails with a missing-key error, the key step above was skipped —
-guide the user through it, don't give up.
+This skill is a Node project. From the repo root, do what's missing:
+1. Install deps if `node_modules/` absent: `pnpm install` (or `npm install`).
+2. (Optional) `cp .env.example .env` and set **`FINNHUB_API_KEY`** (free at
+   https://finnhub.io) for CANSLIM fundamentals. Without it, price-only screening
+   still runs; CANSLIM is marked unavailable. **No LLM key is needed.**
 
 ## How to run
-
-**Screen the universe for buyable stocks (default top 3):**
+**Screen the S&P 500 (default top 5):**
 ```bash
-pnpm research            # or: pnpm research --top 5
+pnpm exec tsx scripts/screen.ts --top 5
 ```
-
-**Analyze specific tickers (skips screening):**
+**Analyze specific tickers:**
 ```bash
-pnpm analyze NVDA AAPL TSM
+pnpm exec tsx scripts/analyze.ts NVDA AAPL TSM
 ```
+Each prints **JSON to stdout**. First screen run fetches ~360 names (a few
+minutes); reruns the same day are cached and fast. Parse the JSON — that's the
+input to your analysis.
 
-Each command prints progress lines and finishes with:
-`Done. Report: <path>`. **Read that markdown file** — it is the result. Do not
-rely on the progress logs. The first screen run fetches data for the full S&P 500
-and may take several minutes; reruns the same day are cached and fast.
+## What the JSON gives you (formula, trustworthy)
+Per candidate: `rsRating` (0–100 cross-sectional), `trendTemplate` (8 conditions
+with pass/fail), `canslimPass` + `canslimNote`, `tradePlan` (entryLow/High, stop,
+target, riskReward — real ATR/MA), `indicators` (MAs, 52w high/low, RSI, ATR),
+`priceStructure` (support/resistance, range, consolidation). `enterNow` = passed
+all + enterable; `watchlist` = qualified-but-extended or near-pass.
 
-## Interpreting the report
+## Your job (the analysis the scripts can't do)
+1. **Read JSON.** Trust its numbers; never invent price levels.
+2. **Judge each `enterNow` name** across technical / fundamental / valuation /
+   news / bull-bear → a verdict (buy / buy_on_pullback / watch / avoid).
+   Follow `references/analysis-guide.md`.
+3. **Market validation (use your web search):** for buy/buy_on_pullback names,
+   check analyst consensus + recent news; label agree / mixed / disagree. Crucially
+   check the two things the screen is blind to: **price vs analyst target** and
+   **insider selling**.
+4. **Write the report** in Traditional Chinese per `references/report-template.md`.
 
-- **適合現在進場（深入分析）**: top picks. Each has a 交易計畫 table
-  (進場區/停損/停利 — formula-computed, trustworthy numbers), 技術指標(實算),
-  **價格結構（公式計算）** (nearest support/resistance, 20d range, MA120,
-  consolidation/near-breakout — what a chart reader sees), 各面向評分
-  (technical/fundamental/valuation/news 0–100), 看多/看空, and
-  **市場討論（網路驗證）** showing whether market consensus agrees (✅附和 /
-  🟡部分分歧 / ⚠️相左) with our call, plus source links.
-- **觀察名單**: good stocks NOT analyzed deeply — either ranked just outside the
-  top N (可進場) or extended above MA20 (漲多·等回檔, with a pullback target).
-- Action mapping for the user: 買進/回檔買進 = healthy & worth entering (often on
-  a pullback to the 進場區); 觀察/避開 = reconsider. Entry zones are usually
-  BELOW current price (wait for pullback) — say so, don't imply "buy now" unless
-  current price is inside the 進場區.
+## Must surface to the user (honesty)
+- Trade-plan numbers are formula-derived (reliable); your thesis & market read are
+  judgment, not fact.
+- The screen finds **already-strong** stocks — picks often sit ABOVE analyst
+  targets / near overheated. Don't imply "buy now" unless price is inside the 進場區;
+  honor "wait for pullback".
+- No backtest; S&P 500 list is a survivorship-biased snapshot. Methodology is
+  named & checkable (Minervini/CANSLIM/RS), not proven to beat the market.
 
-## Important caveats to surface
-
-- Entry/stop/target are formula-derived from real ATR/MA — reliable. The LLM
-  thesis and market-consensus text are judgment, not fact.
-- **It finds already-strong stocks, by design** (Minervini/CANSLIM/RS require
-  demonstrated strength). Picks often sit ABOVE analyst price targets and near
-  overheated. Present them as a strong-stock candidate pool, not a "buy now"
-  trigger — honor the 進場區 and watchlist "wait for pullback" labels.
-- It does NOT check valuation gap vs targets, insider selling, or the user's
-  holdings/cost basis. "Can I add NVDA?" needs position context the tool lacks —
-  flag concentration / chase-risk if relevant.
-
-## Notes for cross-agent use
-
-Pure markdown + a Node CLI; works under any SKILL.md-compatible agent (Claude
-Code, Codex, Hermes, OpenClaw, …). For programmatic/structured (JSON) access or
-MCP exposure, the core graph lives in `src/graphs/research.graph.ts`
-(`runResearch(topN)`, `runAnalyze(tickers)`).
+## Cross-agent use
+Pure scripts + markdown, agentskills.io standard. Works in any CLI agent with
+filesystem + web (Claude Code, Codex CLI, Gemini CLI). The deterministic core is
+in `src/` (imported by `scripts/`); judgment is the host agent's.

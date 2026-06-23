@@ -1,9 +1,10 @@
 import "dotenv/config";
 
 /**
- * Centralized environment access + validation.
- * GEMINI_API_KEY is required (no LLM = no research). Everything else is
- * optional; missing keys produce a warning and a degraded-but-running flow.
+ * Centralized environment access. This is a SKILL: there is no LLM key — the host
+ * agent supplies reasoning and web search. The only (optional) key is Finnhub for
+ * fundamentals; without it, fundamentals degrade gracefully and the price-only
+ * parts still run.
  */
 
 function warnOnce(message: string): void {
@@ -11,12 +12,7 @@ function warnOnce(message: string): void {
 }
 
 export type Env = {
-  geminiApiKey: string;
-  geminiModel: string;
   finnhubApiKey: string | null;
-  dataProvider: string;
-  /** Market-sentiment search backend. "gemini" (grounding) for now. */
-  sentimentProvider: string;
 };
 
 let cached: Env | null = null;
@@ -24,29 +20,13 @@ let cached: Env | null = null;
 export function loadEnv(): Env {
   if (cached) return cached;
 
-  // Prefer GEMINI_API_KEY; fall back to GOOGLE_API_KEY (langchain/Google SDK's
-  // default var) for backward compatibility.
-  const geminiApiKey =
-    process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim() || "";
-  if (!geminiApiKey) {
-    throw new Error(
-      "GEMINI_API_KEY is required. Copy .env.example to .env and set it (https://aistudio.google.com/apikey).",
-    );
-  }
-
   const finnhubApiKey = process.env.FINNHUB_API_KEY?.trim() || null;
   if (!finnhubApiKey) {
     warnOnce(
-      "FINNHUB_API_KEY not set — fundamental/news/valuation agents will run a data-unavailable branch.",
+      "FINNHUB_API_KEY not set — fundamentals (CANSLIM) will be unavailable; price-only screening still runs.",
     );
   }
 
-  cached = {
-    geminiApiKey,
-    geminiModel: process.env.GEMINI_MODEL?.trim() || "gemini-3.1-flash-lite",
-    finnhubApiKey,
-    dataProvider: process.env.DATA_PROVIDER?.trim() || "finnhub",
-    sentimentProvider: process.env.SENTIMENT_PROVIDER?.trim() || "gemini",
-  };
+  cached = { finnhubApiKey };
   return cached;
 }
