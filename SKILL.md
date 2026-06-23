@@ -1,9 +1,10 @@
 ---
 name: stock-research
 description: >-
-  Research US equities and decide what is worth buying and when. Screens a tech
-  stock universe into "good stocks + good entry timing", or deep-analyzes
-  specific tickers on demand. Produces a Traditional-Chinese markdown report with
+  Research US equities and decide what is worth buying and when. Screens the
+  S&P 500 with published methodologies (Minervini Trend Template + CANSLIM +
+  RS Rating) into strong-trend candidates, or deep-analyzes specific tickers on
+  demand. Produces a Traditional-Chinese markdown report with
   formula-computed entry/stop/target (real ATR & moving averages, not
   LLM-guessed), technical/fundamental/valuation/news scoring, bull/bear cases,
   and a web-grounded market-consensus check. Use when the user asks what US stock
@@ -69,8 +70,8 @@ pnpm analyze NVDA AAPL TSM
 
 Each command prints progress lines and finishes with:
 `Done. Report: <path>`. **Read that markdown file** — it is the result. Do not
-rely on the progress logs. The first screen run fetches data for ~100 names and
-may take a few minutes; reruns the same day are cached and fast.
+rely on the progress logs. The first screen run fetches data for the full S&P 500
+and may take several minutes; reruns the same day are cached and fast.
 
 ## Interpreting the report
 
@@ -92,11 +93,13 @@ may take a few minutes; reruns the same day are cached and fast.
 
 - Entry/stop/target are formula-derived from real ATR/MA — reliable. The LLM
   thesis and market-consensus text are judgment, not fact.
-- This screens **tech stocks** only; it selects "good stock + good timing", NOT
-  "the strongest mover" (that would be hindsight). It cannot find "the next
-  NVIDIA" — by definition such a stock isn't strong in the data yet.
-- It does NOT know the user's holdings/cost basis. "Can I add NVDA?" needs
-  position context the tool lacks — flag concentration risk if relevant.
+- **It finds already-strong stocks, by design** (Minervini/CANSLIM/RS require
+  demonstrated strength). Picks often sit ABOVE analyst price targets and near
+  overheated. Present them as a strong-stock candidate pool, not a "buy now"
+  trigger — honor the 進場區 and watchlist "wait for pullback" labels.
+- It does NOT check valuation gap vs targets, insider selling, or the user's
+  holdings/cost basis. "Can I add NVDA?" needs position context the tool lacks —
+  flag concentration / chase-risk if relevant.
 
 ## Notes for cross-agent use
 

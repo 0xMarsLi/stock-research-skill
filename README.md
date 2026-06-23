@@ -28,16 +28,16 @@ Two entry points share one analysis pipeline:
                                   │ risk_off → emit "no trade" and stop
                                   ▼
                          ┌─────────────────────────────────────┐
-                         │  Two-stage screen (pure formula)      │
+                         │  Screen (published methodology, formula)│
                          │                                       │
-                         │  Stage 1 — good stock?                │
-                         │    trend-health gate (above MA50,     │
-                         │      rising MA200, not lagging market)│
-                         │    + quality score (margin/growth/val)│
-                         │                                       │
-                         │  Stage 2 — good entry? (distance MA20)│
-                         │    ├─ near support → enterNow (top N)  │
-                         │    └─ extended     → watchlist         │
+                         │  • RS Rating — cross-sectional        │
+                         │    weighted-momentum percentile       │
+                         │  • Minervini Trend Template (8 rules)  │
+                         │    MA stack, 52w high/low, RS ≥ 70     │
+                         │  • CANSLIM hard filter                 │
+                         │    quarterly EPS ≥ 20%, sales ≥ 15%    │
+                         │  → pass all → rank by RS, top N        │
+                         │    near-pass / extended → watchlist    │
                          └────────┬────────────────────────────┘
    pnpm analyze NVDA ──────────── ┤ (specific tickers: skip screen, enter here)
    (analyze given tickers)        ▼
@@ -70,9 +70,10 @@ tools):
    computed in `nodes/trade-plan.node.ts` from **real ATR and moving averages**
    (stop = entry − 2×ATR, reward:risk = 2). The LLM **never invents prices**, which
    eliminates numeric hallucination. The "real indicators" table is computed too.
-2. **Good stock first, timing second** — screening is not "pick the strongest";
-   it's "healthy + enterable now". Good-but-extended names aren't dropped — they go
-   to a **watchlist with a pullback reference price**.
+2. **Published methodology, not self-tuned knobs** — the screen uses named,
+   documented, community-vetted rules (Minervini Trend Template + O'Neil CANSLIM +
+   cross-sectional RS Rating), with their original thresholds. The report shows
+   "passes X/8 + which conditions failed" so it's checkable, not a black box.
 3. **Market validation** — for every actionable pick, search the web for consensus
    and label it **agree / mixed / disagree**, covering the "are we wrong?" blind spot.
 
@@ -105,25 +106,28 @@ analyze → `research/analysis/<US-Eastern date>_<tickers>.md`.
 
 | 標的 | 建議動作 | 信心 | 進場區 | 停損 | 停利 | 建議倉位 |
 |------|---------|-----|--------|------|------|---------|
-| ANET | 回檔買進 | 80  | 157–165 | 145.34 | 192.62 | 5% |
+| AMD | 買進 | 70 | 523.24–556.66 | 473.12 | 673.62 | 3% |
 
-### ANET — 回檔買進（信心 80）
+### AMD — 買進（信心 70）
+
+#### 選股依據（Minervini 趨勢模板 + CANSLIM）
+趨勢模板 8/8 ｜ RS Rating 99 ｜ CANSLIM ✅ 通過
+CANSLIM：EPS YoY 123.4% (需≥20%)、營收 YoY 35.0% (需≥15%)
+> 方法：依 Minervini 趨勢模板（原始8條）+ O'Neil CANSLIM，RS 為全 universe 橫截面百分位。非自訂參數。
 
 #### 交易計畫（公式計算）          #### 技術指標（實算）
-| 進場區間 | 157.16 – 165.04 |       | 現價 | 169.67 |
-| 停損    | 145.34 |              | MA20 | 161.10 |
-| 停利    | 192.62 |              | MA50 | 158.53 |
-| 風報比  | 2 |                   | ATR  |   7.88 |
+| 進場區間 | 523.24 – 556.66 |       | 現價 | 523.24 |
+| 停損    | 473.12 |              | MA50 | … |
+| 停利    | 673.62 |              | ATR  | … |
+| 風報比  | 2 |
 
 #### 市場討論（網路驗證）
-- 市場觀點：**偏多**　｜　vs 我們的「回檔買進」：**✅ 附和我們**
-  華爾街給予「強力買進」，目標價持續調升；風險為客戶集中與高估值。
-  來源：marketbeat.com、investing.com …
+- 市場觀點：**偏多**　｜　vs 我們的「買進」：**✅ 附和我們**（含來源連結）
 
 ## 👀 觀察名單（體質佳，未深度分析）
-### 漲多·等回檔
-| 標的 | 品質分 | 高於MA20 | 回檔參考價(MA20) |
-| MU  | 100   | +17.4%  | 965.6 |
+### 觀察（漲多·等回檔 / 接近通過）
+| 標的 | 模板 | RS | CANSLIM | 高於MA20 | 回檔參考價(MA20) |
+| MU  | 8/8 | 100 | ✓ | +17.4% | 965.6 |
 ```
 
 ## Project structure
@@ -134,15 +138,18 @@ src/
   agents/                    LLM agents: technical, fundamental, valuation,
                              news, bull-case, bear-case, risk-precheck,
                              research-aggregator, market-sentiment
-  nodes/                     deterministic: screener (two-stage),
+  nodes/                     deterministic: screener (RS + CANSLIM),
+                             minervini (8-rule trend template),
                              trade-plan (formula), markdown-writer
   services/
     indicators.service.ts    SMA / RSI / MACD / ATR / relative strength /
+                             weighted-momentum + percentile (RS Rating) /
                              support-resistance / range / pivots
     providers/               data-source abstraction (swap source = swap impl):
                              prices, fundamentals/news, market sentiment;
                              includes API rate limiter and same-day cache
   schemas/                   zod (explicit agent-output fields for safe parsing)
+  config/universe.ts         vendored S&P 500 list (all sectors); SPY benchmark
   app/cli.ts                 CLI entry point
 research/                    generated reports
 SKILL.md                     instructions for use as a cross-agent skill (agentskills.io)
@@ -150,13 +157,22 @@ SKILL.md                     instructions for use as a cross-agent skill (agents
 
 ## Known limitations
 
-- Free-tier fundamentals are shallow (no ROIC / margin trend / F-Score), so the
-  quality factor is a lightweight proxy.
-- **No backtest**: the full flow can't be backtested cleanly (fundamentals lack
-  point-in-time history; web search leaks future info). Only the pure
-  technical/formula path could be backtested honestly.
-- Tech stocks only; "good stock + good timing" ≠ "finding the next breakout"
-  (which inherently can't be screened from hindsight data).
+- **Finds already-strong stocks, by design.** Minervini / CANSLIM / RS all require
+  *demonstrated* strength (RS ≥ 70, near 52-week high, full MA stack), so the screen
+  surfaces stocks that have **already run** — not undervalued or not-yet-risen ones.
+  In practice this means picks often sit *above* analyst price targets; momentum at
+  its strongest is also closest to overheated. Use the output as a *strong-stock
+  candidate pool*, not a "buy now" trigger — respect the 進場區 and the watchlist's
+  "wait for pullback" labels.
+- **Blind to valuation gap & insider activity.** The screen doesn't compare price to
+  analyst targets or check insider selling — both are real signals it can miss.
+- Free-tier fundamentals are shallow (no ROIC / margin trend / F-Score; CANSLIM is
+  partial — quarterly acceleration and ROE are unverified, and the report says so).
+- **No backtest**: can't prove it beats the market. Full flow can't be backtested
+  cleanly (fundamentals lack point-in-time history; web search leaks future info);
+  only the pure formula path could be tested honestly.
+- Universe is a **vendored S&P 500 snapshot = survivorship bias** (today's members).
+  Methodology is *named and checkable*, but that doesn't make it *proven*.
 
 ## Roadmap
 
