@@ -133,6 +133,38 @@ export function relativeStrengthPct(
 
 export const closesOf = (bars: OhlcvBar[]): number[] => bars.map((b) => b.close);
 
+/**
+ * IBD/O'Neil-style weighted relative-strength raw score: a blend of trailing
+ * returns over ~3/6/9/12 months, weighting the most recent quarter double.
+ * Returns null if there isn't ~12 months (252 trading days) of data.
+ * The cross-sectional percentile of this raw score is the "RS Rating".
+ */
+export function weightedMomentumRaw(closes: number[]): number | null {
+  if (closes.length < 252) return null;
+  const now = closes[closes.length - 1]!;
+  const ret = (daysAgo: number): number => {
+    const past = closes[closes.length - 1 - daysAgo]!;
+    return past > 0 ? now / past - 1 : 0;
+  };
+  // 3m≈63, 6m≈126, 9m≈189, 12m≈252 trading days; recent quarter weighted 2x.
+  return 0.4 * ret(63) + 0.2 * ret(126) + 0.2 * ret(189) + 0.2 * ret(252);
+}
+
+/**
+ * Cross-sectional percentile rank (0-100) of each value within the set.
+ * Used to turn raw momentum into an RS Rating across the universe.
+ */
+export function percentileRanks(values: Map<string, number>): Map<string, number> {
+  const entries = [...values.entries()].sort((a, b) => a[1] - b[1]);
+  const n = entries.length;
+  const out = new Map<string, number>();
+  entries.forEach(([key], i) => {
+    // rank 0..1 → 0..100; with n=1 give 100.
+    out.set(key, n <= 1 ? 100 : Math.round((i / (n - 1)) * 100));
+  });
+  return out;
+}
+
 // --- Horizontal price structure (support / resistance / range) ---------------
 // Heuristic, formula-based (no LLM). Captures what a trader sees on the daily
 // chart: pivot highs/lows, the nearest resistance above / support below the

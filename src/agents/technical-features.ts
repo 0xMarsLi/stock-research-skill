@@ -30,6 +30,15 @@ export interface TechnicalFeatures {
   relStrength20dVsBenchmarkPct: number | null;
   /** 120-day MA (quarter/half-year line) — common mid-term support/resistance. */
   ma120: number | null;
+  /** 150-day MA (30-week) — used by the Minervini trend template. */
+  ma150: number | null;
+  // --- 52-week range (Minervini trend template) ---
+  high52w: number | null;
+  low52w: number | null;
+  /** % current price sits below its 52w high (0 = at high; positive). */
+  pctBelow52wHigh: number | null;
+  /** % current price sits above its 52w low (positive). */
+  pctAbove52wLow: number | null;
   // --- Horizontal price structure (what a trader sees on the daily chart) ---
   /** Nearest pivot resistance above current price. */
   resistance: number | null;
@@ -48,6 +57,8 @@ export interface TechnicalFeatures {
   /** Price is within ~1 ATR of resistance → at a decision point. */
   nearResistance: boolean;
   bars: number;
+  /** Full close series (for cross-sectional momentum in the screener). */
+  closeSeries: number[];
 }
 
 export function computeFeatures(
@@ -79,6 +90,15 @@ export function computeFeatures(
       ? sr.resistance! - lastClose <= atr14
       : false;
 
+  // 52-week range (last ~252 trading days).
+  const window52w = bars.slice(-252);
+  const high52w = window52w.length > 0 ? Math.max(...window52w.map((b) => b.high)) : null;
+  const low52w = window52w.length > 0 ? Math.min(...window52w.map((b) => b.low)) : null;
+  const pctBelow52wHigh =
+    high52w != null && lastClose ? (1 - lastClose / high52w) * 100 : null;
+  const pctAbove52wLow =
+    low52w != null && low52w > 0 && lastClose ? (lastClose / low52w - 1) * 100 : null;
+
   return {
     ticker,
     lastClose,
@@ -96,6 +116,11 @@ export function computeFeatures(
       20,
     ),
     ma120: sma(closes, 120),
+    ma150: sma(closes, 150),
+    high52w,
+    low52w,
+    pctBelow52wHigh,
+    pctAbove52wLow,
     resistance: sr.resistance,
     distToResistancePct,
     support: sr.support,
@@ -106,5 +131,6 @@ export function computeFeatures(
     isConsolidating: box?.isConsolidating ?? false,
     nearResistance,
     bars: bars.length,
+    closeSeries: closes,
   };
 }

@@ -1,22 +1,33 @@
 import { describe, it, expect } from "vitest";
-import { screen, qualityScore, type ScreenInputRow } from "./screener.node.js";
+import { screen, canslimCheck, preFetchReject, type ScreenInputRow } from "./screener.node.js";
 import type { TechnicalFeatures } from "../agents/technical-features.js";
-import type { FundamentalSnapshot, ValuationSnapshot } from "../services/providers/fundamentals.provider.js";
+import type { FundamentalSnapshot } from "../services/providers/fundamentals.provider.js";
 
-function feat(over: Partial<TechnicalFeatures>): TechnicalFeatures {
+/**
+ * Build a Stage-2 leader passing all 8 Minervini conditions (RS comes from the
+ * cross-section, so we make this the strongest name in the set). `closeSeries`
+ * is a 252-day uptrend so weighted momentum is computable and high.
+ */
+function leaderFeatures(over: Partial<TechnicalFeatures> = {}): TechnicalFeatures {
+  const closeSeries = Array.from({ length: 260 }, (_, i) => 50 + i * 0.2); // steady uptrend → 100
   return {
-    ticker: "TEST",
+    ticker: "LEAD",
     lastClose: 100,
-    ma20: 98,
-    ma50: 95,
-    ma200: 85,
-    ma200SlopePct: 3,
+    ma20: 96,
+    ma50: 92,
+    ma120: 85,
+    ma150: 82,
+    ma200: 78,
+    ma200SlopePct: 5,
     rsi14: 60,
     macdHistogram: 0.5,
-    atr14: 2,
-    atrPctOfPrice: 2,
-    relStrength20dVsBenchmarkPct: 3,
-    ma120: 90,
+    atr14: 3,
+    atrPctOfPrice: 3,
+    relStrength20dVsBenchmarkPct: 4,
+    high52w: 105,
+    low52w: 55,
+    pctBelow52wHigh: 4.76,
+    pctAbove52wLow: 81.8,
     resistance: null,
     distToResistancePct: null,
     support: null,
@@ -26,16 +37,17 @@ function feat(over: Partial<TechnicalFeatures>): TechnicalFeatures {
     pctInRange: null,
     isConsolidating: false,
     nearResistance: false,
-    bars: 250,
+    bars: 260,
+    closeSeries,
     ...over,
   };
 }
 
 function goodFund(over: Partial<FundamentalSnapshot> = {}): FundamentalSnapshot {
   return {
-    ticker: "TEST",
-    revenueGrowthYoyPct: 15,
-    epsGrowthYoyPct: 20,
+    ticker: "LEAD",
+    revenueGrowthYoyPct: 20,
+    epsGrowthYoyPct: 30,
     netMarginPct: 22,
     freeCashFlow: 1000,
     nextEarningsDate: null,
@@ -43,98 +55,73 @@ function goodFund(over: Partial<FundamentalSnapshot> = {}): FundamentalSnapshot 
   };
 }
 
-function val(over: Partial<ValuationSnapshot> = {}): ValuationSnapshot {
-  return { ticker: "TEST", peTtm: 30, forwardPe: 22, ps: 8, evToEbitda: 18, ...over };
+function row(features: TechnicalFeatures, fundamental?: FundamentalSnapshot): ScreenInputRow {
+  return { features, fundamental };
 }
 
-function row(features: TechnicalFeatures, fundamental?: FundamentalSnapshot, valuation?: ValuationSnapshot): ScreenInputRow {
-  return { features, fundamental, valuation };
-}
-
-describe("trend-health gate", () => {
-  it("rejects penny stocks", () => {
-    const r = screen(new Map([["P", row(feat({ ticker: "P", lastClose: 5 }))]]), 10);
-    expect(r.rejected[0]?.reason).toBe("price <= 10");
+describe("canslimCheck", () => {
+  it("passes when EPS≥20% and sales≥15%", () => {
+    expect(canslimCheck(goodFund()).pass).toBe(true);
   });
-
-  it("rejects when MA200 is rolling over (long-term trend broken)", () => {
-    const r = screen(new Map([["F", row(feat({ ticker: "F", ma200SlopePct: -2 }))]]), 10);
-    expect(r.rejected[0]?.reason).toMatch(/MA200 falling/);
+  it("fails when EPS growth too low", () => {
+    expect(canslimCheck(goodFund({ epsGrowthYoyPct: 5 })).pass).toBe(false);
   });
-
-  it("rejects names well below MA50 (breakdown, not a pullback)", () => {
-    const r = screen(new Map([["B", row(feat({ ticker: "B", lastClose: 88, ma50: 95 }))]]), 10);
-    expect(r.rejected[0]?.reason).toMatch(/below MA50/);
-  });
-
-  it("rejects names lagging the benchmark badly", () => {
-    const r = screen(new Map([["L", row(feat({ ticker: "L", relStrength20dVsBenchmarkPct: -10 }), goodFund(), val())]]), 10);
-    expect(r.rejected[0]?.reason).toMatch(/lagging benchmark/);
-  });
-
-  it("ALLOWS a shallow dip toward MA50 (good stock on a pullback)", () => {
-    // 2% below MA50 (within tolerance), MA200 rising, RS ok → still passes.
-    const f = feat({ ticker: "DIP", lastClose: 94, ma20: 96, ma50: 96, ma200: 85, ma200SlopePct: 4, relStrength20dVsBenchmarkPct: 1 });
-    const r = screen(new Map([["DIP", row(f, goodFund(), val())]]), 10);
-    expect(r.rejected).toEqual([]);
-    expect([...r.enterNow, ...r.watchlist].map((c) => c.ticker)).toContain("DIP");
+  it("fails (not passes) when fundamentals missing", () => {
+    const r = canslimCheck(undefined);
+    expect(r.pass).toBe(false);
+    expect(r.note).toMatch(/資料不足/);
   });
 });
 
-describe("quality gate", () => {
-  it("rejects weak fundamentals below the floor", () => {
-    const weak = goodFund({ netMarginPct: -5, revenueGrowthYoyPct: -10, epsGrowthYoyPct: -20 });
-    const r = screen(new Map([["W", row(feat({ ticker: "W" }), weak, val({ forwardPe: 80 }))]]), 10);
-    expect(r.rejected[0]?.reason).toMatch(/quality below floor/);
+describe("preFetchReject", () => {
+  it("keeps a leader", () => {
+    expect(preFetchReject(leaderFeatures())).toBeNull();
   });
-
-  it("does not penalize totally missing fundamentals (null quality passes)", () => {
-    const r = screen(new Map([["X", row(feat({ ticker: "X" }))]]), 10);
-    expect(r.rejected).toEqual([]);
+  it("drops penny stocks and below-MA200 names", () => {
+    expect(preFetchReject(leaderFeatures({ lastClose: 5 }))).toMatch(/price/);
+    expect(preFetchReject(leaderFeatures({ lastClose: 70 }))).toMatch(/below MA200/);
+  });
+  it("drops names with MA200 not rising", () => {
+    expect(preFetchReject(leaderFeatures({ ma200SlopePct: -1 }))).toMatch(/MA200 not rising/);
   });
 });
 
-describe("entry-timing classification", () => {
-  it("near MA20 → enterNow; extended → watchlist", () => {
-    const near = feat({ ticker: "NEAR", lastClose: 100, ma20: 99 }); // +1%
-    const ext = feat({ ticker: "EXT", lastClose: 120, ma20: 100 }); // +20%
+describe("screen", () => {
+  it("puts a leader passing template+CANSLIM into enterNow with RS Rating", () => {
+    // Add a weak second name so the cross-section has a clear leader.
+    const weak = leaderFeatures({
+      ticker: "WEAK",
+      closeSeries: Array.from({ length: 260 }, () => 100), // flat → low momentum
+      ma200SlopePct: -1, // also fails template
+    });
     const r = screen(new Map([
-      ["NEAR", row(near, goodFund(), val())],
-      ["EXT", row(ext, goodFund(), val())],
-    ]), 10);
-    expect(r.enterNow.map((c) => c.ticker)).toContain("NEAR");
-    expect(r.watchlist.map((c) => c.ticker)).toContain("EXT");
-    expect(r.watchlist.find((c) => c.ticker === "EXT")?.pullbackTo).toBe(100);
+      ["LEAD", row(leaderFeatures(), goodFund())],
+      ["WEAK", row(weak, goodFund({ ticker: "WEAK" }))],
+    ]), 5);
+    const lead = r.enterNow.find((c) => c.ticker === "LEAD");
+    expect(lead).toBeTruthy();
+    expect(lead!.trendTemplate.passAll).toBe(true);
+    expect(lead!.canslimPass).toBe(true);
+    expect(lead!.rsRating).toBe(100); // strongest momentum in the set
   });
 
-  it("ranks enterNow by quality, caps to topN, and overflows the rest to watchlist (not dropped)", () => {
-    const hi = row(feat({ ticker: "HI", lastClose: 100, ma20: 99 }), goodFund({ netMarginPct: 25, revenueGrowthYoyPct: 30 }), val());
-    const lo = row(feat({ ticker: "LO", lastClose: 100, ma20: 99 }), goodFund({ netMarginPct: 10, revenueGrowthYoyPct: 5 }), val());
-    const r = screen(new Map([["LO", lo], ["HI", hi]]), 1);
-    expect(r.enterNow).toHaveLength(1);
-    expect(r.enterNow[0]?.ticker).toBe("HI");
-    // LO is enterable but beyond topN → demoted to watchlist, NOT dropped.
-    expect(r.watchlist.map((c) => c.ticker)).toContain("LO");
-    expect(r.rejected.map((c) => c.ticker)).not.toContain("LO");
+  it("rejects a name failing CANSLIM even if template passes", () => {
+    const r = screen(new Map([
+      ["LEAD", row(leaderFeatures(), goodFund({ epsGrowthYoyPct: 2, revenueGrowthYoyPct: 2 }))],
+    ]), 5);
+    expect(r.enterNow).toHaveLength(0);
+    // template all pass but CANSLIM fails → not enterNow; passCount 8 ≥ NEAR_PASS so watchlist
+    expect([...r.watchlist, ...r.rejected].some((x) => "ticker" in x && x.ticker === "LEAD")).toBe(true);
   });
-});
 
-describe("qualityScore", () => {
-  it("returns null when no fundamentals at all", () => {
-    expect(qualityScore(undefined, undefined)).toBeNull();
+  it("extended leader (far above MA20) goes to watchlist, not enterNow", () => {
+    const ext = leaderFeatures({ lastClose: 100, ma20: 88 }); // +13.6% over MA20
+    const r = screen(new Map([["LEAD", row(ext, goodFund())]]), 5);
+    expect(r.enterNow).toHaveLength(0);
+    expect(r.watchlist.some((c) => c.ticker === "LEAD")).toBe(true);
   });
-  it("high margin + growth + reasonable PE scores high", () => {
-    const s = qualityScore(goodFund({ netMarginPct: 25, revenueGrowthYoyPct: 30 }), val({ forwardPe: 20 }));
-    expect(s!).toBeGreaterThan(80);
-  });
-  it("weak fundamentals score low", () => {
-    const s = qualityScore(goodFund({ netMarginPct: 2, revenueGrowthYoyPct: -5, epsGrowthYoyPct: -10 }), val({ forwardPe: 90 }));
-    expect(s!).toBeLessThan(40);
-  });
-});
 
-describe("earnings filter flag", () => {
-  it("always flags that earnings-date filtering was skipped", () => {
-    expect(screen(new Map(), 10).unfilteredForEarnings).toBe(true);
+  it("always flags earnings filter not applied", () => {
+    expect(screen(new Map(), 5).unfilteredForEarnings).toBe(true);
   });
 });

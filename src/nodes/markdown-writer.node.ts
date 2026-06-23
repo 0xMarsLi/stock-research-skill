@@ -155,13 +155,13 @@ function renderWatchlist(watchlist: ScoredCandidate[]): string[] {
 
   if (enterableOverflow.length > 0) {
     out.push(
-      "### 可進場・排名前 5 以外",
+      "### 可進場・排名前 N 以外",
       "",
-      "體質好、現價也貼近均線可進場，但本次深度分析名額有限未納入。需要時用 `analyze <代號>` 深入評估。",
+      "通過 Minervini 模板+CANSLIM、現價也貼近均線，但本次深度分析名額有限未納入。需要時用 `analyze <代號>` 深入評估。",
       "",
-      "| 標的 | 品質分 | 現價vsMA20 |",
-      "|---|---|---|",
-      ...enterableOverflow.map((c) => `| ${c.ticker} | ${c.qualityScore ?? "—"} | ${fmtVsMa20(c.pctAboveMa20)} |`),
+      "| 標的 | 模板 | RS | 現價vsMA20 |",
+      "|---|---|---|---|",
+      ...enterableOverflow.map((c) => `| ${c.ticker} | ${c.trendTemplate.passCount}/8 | ${c.rsRating ?? "—"} | ${fmtVsMa20(c.pctAboveMa20)} |`),
       "",
     );
   }
@@ -172,19 +172,19 @@ function renderWatchlist(watchlist: ScoredCandidate[]): string[] {
   return out;
 }
 
-/** (b) 漲多·等回檔。 */
+/** (b) 漲多·等回檔 與 接近通過（near-pass）。 */
 function renderExtendedWatch(watchlist: ScoredCandidate[]): string[] {
   const rows = watchlist.map(
     (c) =>
-      `| ${c.ticker} | ${c.qualityScore ?? "—"} | ${fmtVsMa20(c.pctAboveMa20)} | ${c.pullbackTo ?? "—"} |`,
+      `| ${c.ticker} | ${c.trendTemplate.passCount}/8 | ${c.rsRating ?? "—"} | ${c.canslimPass ? "✓" : "✗"} | ${fmtVsMa20(c.pctAboveMa20)} | ${c.pullbackTo ?? "—"} |`,
   );
   return [
-    "### 漲多·等回檔",
+    "### 觀察（漲多·等回檔 / 接近通過）",
     "",
-    "體質通過篩選、但目前股價乖離均線過大（漲多）的好股票。建議等回檔至參考價附近，再用 `analyze <代號>` 深入評估。",
+    "通過或接近通過 Minervini 模板的好股票，但股價乖離過大或尚差幾條。建議等回檔/條件補齊，再用 `analyze <代號>` 深入評估。",
     "",
-    "| 標的 | 品質分 | 高於MA20 | 回檔參考價(MA20) |",
-    "|---|---|---|---|",
+    "| 標的 | 模板 | RS | CANSLIM | 高於MA20 | 回檔參考價(MA20) |",
+    "|---|---|---|---|---|---|",
     ...rows,
     "",
   ];
@@ -226,17 +226,17 @@ function renderCandidate(
 
   // 為什麼這檔入選（兩階段篩選明細）。
   if (screen) {
-    const prox = screen.pctAboveMa20 == null
-      ? "—"
-      : screen.pctAboveMa20 <= 0
-        ? `貼近/低於 MA20（${screen.pctAboveMa20}%）`
-        : `高於 MA20 ${screen.pctAboveMa20}%`;
+    const failed = screen.trendTemplate.conditions.filter((c) => !c.pass).map((c) => c.label);
     lines.push(
-      "#### 入選理由（兩階段篩選）",
+      "#### 選股依據（Minervini 趨勢模板 + CANSLIM）",
       "",
-      `品質分 **${screen.qualityScore ?? "—"}**　｜　進場接近度 ${screen.entryProximity}（${prox}）`,
+      `趨勢模板 **${screen.trendTemplate.passCount}/8**　｜　RS Rating **${screen.rsRating ?? "—"}**　｜　CANSLIM ${screen.canslimPass ? "✅ 通過" : "❌ 未通過"}`,
       "",
-      "> 由科技股池先篩「好股票」（趨勢健康 + 品質：獲利/成長/估值），再依進場時機分類。此檔屬「貼近支撐、適合現在進場」。",
+      failed.length > 0 ? `未通過模板條件：${failed.join("、")}` : "✅ 趨勢模板 8 條全數通過",
+      "",
+      `> CANSLIM：${screen.canslimNote}`,
+      "",
+      "> 方法：依 Mark Minervini 趨勢模板（8條，原始閾值）+ O'Neil CANSLIM 成長硬條件篩選，RS Rating 為全 universe 橫截面百分位。非自訂參數。",
       "",
     );
   }

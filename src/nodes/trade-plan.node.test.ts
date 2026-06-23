@@ -16,6 +16,11 @@ function feat(over: Partial<TechnicalFeatures>): TechnicalFeatures {
     atrPctOfPrice: 4,
     relStrength20dVsBenchmarkPct: 2,
     ma120: 85,
+    ma150: 83,
+    high52w: 120,
+    low52w: 70,
+    pctBelow52wHigh: 16.7,
+    pctAbove52wLow: 42.9,
     resistance: null,
     distToResistancePct: null,
     support: null,
@@ -26,6 +31,7 @@ function feat(over: Partial<TechnicalFeatures>): TechnicalFeatures {
     isConsolidating: false,
     nearResistance: false,
     bars: 250,
+    closeSeries: [],
     ...over,
   };
 }

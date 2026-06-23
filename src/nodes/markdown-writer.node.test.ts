@@ -49,12 +49,22 @@ describe("renderReport", () => {
       recommendations: [],
       agentResults: {},
       watchlist: [
-        { ticker: "MU", qualityScore: 88, entryProximity: 0, pctAboveMa20: 17.4, bucket: "watch", pullbackTo: 965 },
+        {
+          ticker: "MU",
+          rsRating: 88,
+          trendTemplate: { passCount: 8, passAll: true, conditions: [] },
+          canslimPass: true,
+          canslimNote: "ok",
+          entryProximity: 0,
+          pctAboveMa20: 17.4,
+          bucket: "watch",
+          pullbackTo: 965,
+        },
       ],
     });
     expect(md).toContain("## 👀 觀察名單（體質佳，未深度分析）");
-    expect(md).toContain("### 漲多·等回檔");
-    expect(md).toContain("| MU | 88 | +17.4% | 965 |");
+    expect(md).toContain("### 觀察（漲多·等回檔 / 接近通過）");
+    expect(md).toContain("| MU | 8/8 | 88 | ✓ | +17.4% | 965 |");
     expect(md).not.toContain("## 不交易"); // has watchlist => not no-trade
   });
 

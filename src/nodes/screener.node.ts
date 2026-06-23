@@ -3,57 +3,56 @@ import type {
   FundamentalSnapshot,
   ValuationSnapshot,
 } from "../services/providers/fundamentals.provider.js";
+import { weightedMomentumRaw, percentileRanks } from "../services/indicators.service.js";
+import { evaluateTrendTemplate, type TrendTemplateResult } from "./minervini.js";
 
 /**
- * Two-stage screener (deterministic, no LLM).
+ * Screener using PUBLISHED methodologies (no self-invented magic numbers):
+ *   1. Cross-sectional RS Rating (O'Neil/IBD weighted momentum percentile).
+ *   2. Minervini Trend Template — verbatim 8 conditions (incl. RS ≥ 70).
+ *   3. CANSLIM fundamental hard filter — quarterly EPS ≥ 20%, sales ≥ 15%.
  *
- * Philosophy: separate "is this a GOOD stock?" from "is NOW a good entry?".
- * Selecting only the strongest names is just momentum / hindsight. Instead:
+ * A name must pass ALL of the trend template AND CANSLIM to be an enterNow
+ * candidate (strict, by design — Minervini eliminates ~95%). Near-passes
+ * (template ≥ NEAR_PASS) go to the watchlist with "missing which conditions".
+ * Entry-timing (near MA20 vs extended) still decides enter-now vs wait.
  *
- *   Stage 1 — Good-stock pool
- *     1a. Trend-health gate (price only, all names, zero API cost) — LOOSE:
- *         keep anything whose long-term structure is intact; reject only
- *         falling knives, penny stocks, and data-poor names. A name temporarily
- *         below MA20/MA50 (a pullback) still passes.
- *     1b. Quality score (Finnhub fundamentals, only for gate-passers) — LOOSE:
- *         positive net margin + positive revenue OR EPS growth = a good stock.
- *
- *   Stage 2 — Entry timing (split the good-stock pool into two lists)
- *     - enterNow:   price near MA20 (enterable today)        → deep analysis
- *     - watchlist:  good stock but extended far above MA20    → wait for pullback
- *
- * So MU (great business, but +17% over MA20) lands on the watchlist instead of
- * vanishing; QCOM (good + near MA20) lands on enterNow; TSLA (weak fundamentals)
- * is rejected at the quality stage.
+ * ⚠️ Free-tier Finnhub gives only TTM YoY (no quarterly acceleration, no ROE),
+ * so CANSLIM is partial — surfaced via `canslimNote`, never silently dropped.
  */
 
 export interface ScoredCandidate {
   ticker: string;
-  /** Quality score 0-100 (fundamentals). null if fundamentals unavailable. */
-  qualityScore: number | null;
+  /** RS Rating 0-100 (cross-sectional percentile of weighted momentum). */
+  rsRating: number | null;
+  /** Minervini trend template result (X/8). */
+  trendTemplate: TrendTemplateResult;
+  /** CANSLIM fundamental check. */
+  canslimPass: boolean;
+  canslimNote: string;
   /** Entry proximity 0-100 (100 = at/below MA20, 0 = extended). */
   entryProximity: number;
   /** % the current price sits above MA20 (negative = below). */
   pctAboveMa20: number | null;
-  /** "enter_now" | "watch" classification. */
+  /** "enter_now" | "watch". */
   bucket: "enter_now" | "watch";
-  /** Approx pullback target (MA20) for watchlist names. */
+  /** Approx pullback target (MA20) for extended names. */
   pullbackTo: number | null;
 }
 
 export interface ScreenResult {
-  /** Good stocks enterable now, ranked by quality, capped to topN. */
+  /** Pass template+CANSLIM, enterable now, ranked by RS, capped to topN. */
   enterNow: ScoredCandidate[];
-  /** Good stocks that are too extended — wait for a pullback. */
+  /** Qualified but extended, OR near-passes — listed, not deep-analyzed. */
   watchlist: ScoredCandidate[];
   rejected: { ticker: string; reason: string }[];
   unfilteredForEarnings: boolean;
 }
 
-/** Above this % over MA20 a name is "extended" → watchlist instead of enter-now. */
+/** Template pass-count at/above this (but <8) → watchlist near-pass. */
+const NEAR_PASS = 6;
+/** Above this % over MA20 a name is "extended" → wait for pullback. */
 const EXTENDED_PCT = 8;
-/** Minimum quality score to count as a "good stock". Loose by design. */
-const QUALITY_FLOOR = 40;
 
 export interface ScreenInputRow {
   features: TechnicalFeatures;
@@ -65,110 +64,90 @@ export function screen(
   rows: Map<string, ScreenInputRow>,
   topN: number,
 ): ScreenResult {
-  const good: ScoredCandidate[] = [];
+  // Pass 1 — cross-sectional RS Rating over the whole universe.
+  const rawMomentum = new Map<string, number>();
+  for (const [ticker, row] of rows) {
+    const raw = weightedMomentumRaw(closesFrom(row.features));
+    if (raw != null) rawMomentum.set(ticker, raw);
+  }
+  const rsRanks = percentileRanks(rawMomentum);
+
+  // Pass 2 — per-stock template + CANSLIM.
+  const qualified: ScoredCandidate[] = []; // pass all 8 + CANSLIM
+  const nearPass: ScoredCandidate[] = []; // template ≥ NEAR_PASS (or qualified-but-extended overflow)
   const rejected: { ticker: string; reason: string }[] = [];
 
   for (const [ticker, row] of rows) {
-    const gate = trendHealthReject(row.features);
-    if (gate) {
-      rejected.push({ ticker, reason: gate });
+    const f = row.features;
+    if (f.lastClose == null) {
+      rejected.push({ ticker, reason: "no price data" });
       continue;
     }
-    const quality = qualityScore(row.fundamental, row.valuation);
-    if (quality != null && quality < QUALITY_FLOOR) {
-      rejected.push({ ticker, reason: `quality below floor (${quality} < ${QUALITY_FLOOR})` });
+    if (f.lastClose <= 10) {
+      rejected.push({ ticker, reason: "price <= 10" });
       continue;
     }
-    good.push(classify(ticker, row.features, quality));
+    const rsRating = rsRanks.get(ticker) ?? null;
+    const trendTemplate = evaluateTrendTemplate(f, rsRating);
+    const cans = canslimCheck(row.fundamental);
+    const candidate = classify(ticker, f, rsRating, trendTemplate, cans);
+
+    if (trendTemplate.passAll && cans.pass) {
+      qualified.push(candidate);
+    } else if (trendTemplate.passCount >= NEAR_PASS) {
+      nearPass.push(candidate);
+    } else {
+      rejected.push({ ticker, reason: `trend template ${trendTemplate.passCount}/8${cans.pass ? "" : ", CANSLIM fail"}` });
+    }
   }
 
-  // Rank good stocks by quality (fallback: entry proximity when quality unknown).
-  const byQuality = (a: ScoredCandidate, b: ScoredCandidate) =>
-    (b.qualityScore ?? 50) - (a.qualityScore ?? 50) || b.entryProximity - a.entryProximity;
+  // Rank by RS Rating (the published "strength" signal), desc.
+  const byRs = (a: ScoredCandidate, b: ScoredCandidate) =>
+    (b.rsRating ?? -1) - (a.rsRating ?? -1) || b.entryProximity - a.entryProximity;
 
-  const enterable = good.filter((c) => c.bucket === "enter_now").sort(byQuality);
-  const extended = good.filter((c) => c.bucket === "watch").sort(byQuality);
+  const enterable = qualified.filter((c) => c.bucket === "enter_now").sort(byRs);
+  const extended = qualified.filter((c) => c.bucket === "watch").sort(byRs);
 
-  // Only the top-N enterable names get deep analysis. The rest are still good
-  // stocks — demote them to the watchlist instead of dropping them.
   const enterNow = enterable.slice(0, topN);
   const overflow = enterable.slice(topN);
-  const watchlist = [...overflow, ...extended].sort(byQuality);
+  // Watchlist = qualified-but-extended + qualified overflow + template near-passes.
+  const watchlist = [...overflow, ...extended, ...nearPass.sort(byRs)];
 
-  return {
-    enterNow,
-    watchlist,
-    rejected,
-    unfilteredForEarnings: true,
-  };
+  return { enterNow, watchlist, rejected, unfilteredForEarnings: true };
 }
 
 /**
- * Stage 1a — trend-health gate. Healthy-uptrend minimum bar:
- *  - not a penny stock / has MA history
- *  - MA200 not rolling over (long-term trend intact)
- *  - price above MA50 (mid-term uptrend) — BUT allow a shallow dip toward MA20:
- *    if price is within DIP_TOLERANCE_PCT below MA50 it still passes (pullback,
- *    not a breakdown). This keeps "temporarily under the line but fine" names.
- *  - not lagging the benchmark badly (relative strength not deeply negative)
- * Exported so the graph can pre-filter before spending Finnhub calls.
+ * CANSLIM fundamental hard filter (free-tier proxy). Requires growth; missing
+ * data fails CANSLIM (no "null免檢"). Note partial coverage in canslimNote.
  */
-const DIP_TOLERANCE_PCT = 3; // how far below MA50 still counts as a pullback
-const RS_FLOOR_PCT = -5; // 20d relative strength vs benchmark must beat this
+const EPS_GROWTH_MIN = 20; // %
+const SALES_GROWTH_MIN = 15; // %
 
-export function trendHealthReject(f: TechnicalFeatures): string | null {
-  if (f.lastClose == null) return "no price data";
-  if (f.lastClose <= 10) return "price <= 10";
-  if (f.ma50 == null || f.ma200 == null) return "insufficient history for MA50/MA200";
-  if ((f.ma200SlopePct ?? 0) < 0) return "long-term trend rolling over (MA200 falling)";
-  // Must be above MA50, allowing a shallow pullback below it.
-  const pctVsMa50 = (f.lastClose / f.ma50 - 1) * 100;
-  if (pctVsMa50 < -DIP_TOLERANCE_PCT) return "below MA50 beyond pullback tolerance";
-  if ((f.relStrength20dVsBenchmarkPct ?? 0) < RS_FLOOR_PCT) return "lagging benchmark";
-  return null;
-}
-
-/**
- * Stage 1b — quality score 0-100 from free-tier fundamentals. LOOSE proxy:
- * profitability (net margin), growth (revenue or EPS), and valuation sanity.
- * Returns null when no fundamentals at all (don't penalize missing data — the
- * trend gate already vouched for it).
- */
-export function qualityScore(
-  fund: FundamentalSnapshot | undefined,
-  val: ValuationSnapshot | undefined,
-): number | null {
-  if (!fund && !val) return null;
-  const margin = fund?.netMarginPct ?? null;
-  const revG = fund?.revenueGrowthYoyPct ?? null;
+export function canslimCheck(fund: FundamentalSnapshot | undefined): {
+  pass: boolean;
+  note: string;
+} {
   const epsG = fund?.epsGrowthYoyPct ?? null;
-  const fwdPe = val?.forwardPe ?? null;
-  if (margin == null && revG == null && epsG == null && fwdPe == null) return null;
-
-  // Profitability (0-40): positive margin scores, saturating at 25% margin.
-  const profitability = margin == null ? 15 : clamp01(margin / 25) * 40;
-
-  // Growth (0-40): best of revenue / EPS growth, saturating at +30% YoY.
-  const bestGrowth = Math.max(revG ?? -999, epsG ?? -999);
-  const growth = bestGrowth === -999 ? 15 : clamp01(bestGrowth / 30) * 40;
-
-  // Valuation sanity (0-20): reasonable forward PE scores; extreme/none neutral.
-  let valuation = 10;
-  if (fwdPe != null) {
-    if (fwdPe <= 0) valuation = 5; // negative earnings
-    else if (fwdPe <= 25) valuation = 20;
-    else if (fwdPe <= 45) valuation = 12;
-    else valuation = 5; // very expensive
+  const revG = fund?.revenueGrowthYoyPct ?? null;
+  if (epsG == null && revG == null) {
+    return { pass: false, note: "基本面資料不足，CANSLIM 未通過" };
   }
-
-  return round(profitability + growth + valuation);
+  const epsOk = epsG != null && epsG >= EPS_GROWTH_MIN;
+  const salesOk = revG != null && revG >= SALES_GROWTH_MIN;
+  const pass = epsOk && salesOk;
+  const note =
+    `EPS YoY ${fmtPct(epsG)} (需≥${EPS_GROWTH_MIN}%)、營收 YoY ${fmtPct(revG)} (需≥${SALES_GROWTH_MIN}%)` +
+    `；註：免費資料無季加速/ROE，CANSLIM 部分條件未驗`;
+  return { pass, note };
 }
 
-/** Stage 2 — entry-timing classification for a good stock. */
+/** Entry-timing classification (near MA20 vs extended). */
 function classify(
   ticker: string,
   f: TechnicalFeatures,
-  quality: number | null,
+  rsRating: number | null,
+  trendTemplate: TrendTemplateResult,
+  cans: { pass: boolean; note: string },
 ): ScoredCandidate {
   const pctAboveMa20 =
     f.ma20 != null && f.ma20 > 0 && f.lastClose != null
@@ -178,7 +157,10 @@ function classify(
   const extended = pctAboveMa20 != null && pctAboveMa20 > EXTENDED_PCT;
   return {
     ticker,
-    qualityScore: quality,
+    rsRating,
+    trendTemplate,
+    canslimPass: cans.pass,
+    canslimNote: cans.note,
     entryProximity: round(entryProximity * 100),
     pctAboveMa20: pctAboveMa20 == null ? null : round(pctAboveMa20),
     bucket: extended ? "watch" : "enter_now",
@@ -199,4 +181,35 @@ function clamp01(x: number): number {
 
 function round(n: number): number {
   return Math.round(n * 10) / 10;
+}
+
+function fmtPct(v: number | null): string {
+  return v == null ? "N/A" : `${v.toFixed(1)}%`;
+}
+
+/**
+ * Reconstruct a close series from features — only the last close is stored, so
+ * weighted momentum needs raw bars. We instead expose a helper the graph fills.
+ * (See `screen()` — momentum is computed from features.closeSeries if present.)
+ */
+function closesFrom(f: TechnicalFeatures): number[] {
+  return f.closeSeries ?? [];
+}
+
+/**
+ * Pure-price pre-fetch gate for the graph: cheaply drop names that clearly can't
+ * pass the Minervini template, so we only spend Finnhub calls on real
+ * candidates. Conservative (keeps near-passes). Returns a reject reason or null.
+ */
+export function preFetchReject(f: TechnicalFeatures): string | null {
+  if (f.lastClose == null) return "no price data";
+  if (f.lastClose <= 10) return "price <= 10";
+  if (f.ma50 == null || f.ma150 == null || f.ma200 == null) return "insufficient MA history";
+  if ((f.ma200SlopePct ?? -1) <= 0) return "MA200 not rising";
+  // Must be above the long-term averages (template conditions 1, 5).
+  if (f.lastClose < f.ma200) return "below MA200";
+  if (f.lastClose < f.ma50) return "below MA50";
+  // Near 52-week high band (condition 7) — allow a margin for near-passes.
+  if ((f.pctBelow52wHigh ?? 999) > 35) return "far below 52w high";
+  return null;
 }

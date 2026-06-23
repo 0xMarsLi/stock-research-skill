@@ -5,7 +5,7 @@ import type { Recommendation } from "../schemas/recommendation.schema.js";
 import { getProviders } from "../services/providers/index.js";
 import { UNIVERSE, BENCHMARK } from "../config/universe.js";
 import { computeFeatures, type TechnicalFeatures } from "../agents/technical-features.js";
-import { screen, trendHealthReject, type ScoredCandidate, type ScreenInputRow } from "../nodes/screener.node.js";
+import { screen, preFetchReject, type ScoredCandidate, type ScreenInputRow } from "../nodes/screener.node.js";
 import { buildTradePlan } from "../nodes/trade-plan.node.js";
 import { runMarketRegimeAgent } from "../agents/market-regime.agent.js";
 import { runTechnicalAgent } from "../agents/technical.agent.js";
@@ -104,14 +104,13 @@ async function screenerNode(state: State): Promise<Partial<State>> {
   const { fundamentals } = getProviders();
   const featuresByTicker = await fetchFeatures(UNIVERSE);
 
-  // Stage 1a: price-only trend gate (free) — only gate-passers get fundamentals,
-  // which keeps Finnhub calls far below the free-tier limit.
-  const gatePassers = UNIVERSE.filter((t) => trendHealthReject(featuresByTicker[t]!) === null);
-  console.log(`[screener] trend gate: ${gatePassers.length}/${UNIVERSE.length} passed → fetching fundamentals`);
+  // Pre-fetch gate: pure-price drop of names that clearly can't pass the
+  // Minervini template, so only real candidates spend Finnhub calls (keeps the
+  // free-tier limit safe even with a ~370-name S&P 500 universe).
+  const gatePassers = UNIVERSE.filter((t) => preFetchReject(featuresByTicker[t]!) === null);
+  console.log(`[screener] pre-fetch gate: ${gatePassers.length}/${UNIVERSE.length} → fetching fundamentals`);
 
   const rows = new Map<string, ScreenInputRow>();
-  // Rejected-by-gate names still go into screen() (so they're counted/logged),
-  // just without fundamentals.
   for (const t of UNIVERSE) rows.set(t, { features: featuresByTicker[t]! });
   await mapWithConcurrency(gatePassers, FUNDAMENTALS_CONCURRENCY, async (ticker) => {
     const [fundamental, valuation] = await Promise.all([
@@ -127,14 +126,11 @@ async function screenerNode(state: State): Promise<Partial<State>> {
     `[screener] universe ${UNIVERSE.length} | enterNow ${result.enterNow.length} | watchlist ${result.watchlist.length} | rejected ${result.rejected.length}`,
   );
   console.log(
-    `[screener] 進場 top ${result.enterNow.length}: ${result.enterNow.map((c) => `${c.ticker}(q${c.qualityScore ?? "?"})`).join(", ") || "(none)"}`,
+    `[screener] 進場 top: ${result.enterNow.map((c) => `${c.ticker}(${c.trendTemplate.passCount}/8,RS${c.rsRating ?? "?"})`).join(", ") || "(none)"}`,
   );
   console.log(
-    `[screener] 觀察(漲多): ${result.watchlist.map((c) => `${c.ticker}(q${c.qualityScore ?? "?"})`).join(", ") || "(none)"}`,
+    `[screener] 觀察: ${result.watchlist.slice(0, 15).map((c) => `${c.ticker}(${c.trendTemplate.passCount}/8)`).join(", ") || "(none)"}`,
   );
-  if (result.unfilteredForEarnings) {
-    console.log("[screener] NOTE: earnings-date proximity filter NOT applied.");
-  }
 
   const candidates = result.enterNow.map((c) => c.ticker);
   const screenScores: Record<string, ScoredCandidate> = {};
